@@ -1,0 +1,17 @@
+{
+  "name": "cortex",
+  "version": "0.1.0",
+  "description": "Slash commands + auto-capture hooks bridging Claude Code to the local cortex memory service. Wraps the existing MCP server with one-keystroke recall/store and durable session capture across compaction.",
+  "author": {
+    "name": "cortex"
+  },
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "rag",
+    "cortex",
+    "mcp"
+  ],
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks.json"
+}
