@@ -23,11 +23,14 @@ durable session capture across compaction.
   at `${MEMORY_API_URL}/ingest/transcript`. The server scrubs secrets,
   stores the raw turns as a `summary` memory, and runs an LLM extractor
   that emits typed atoms (`decision`, `fact`, `lesson`, `event`) linked to
-  prior memories via the graph.
+  prior memories via the graph. Server-side ingest extraction lands in a
+  follow-up release; until then the endpoint stores the raw digest and the
+  typed-atom + graph-edge pipeline is pending.
 
   Hooks always `exit 0` — they never block compaction or session shutdown.
   Failures (no Bearer cache, server down, jq missing) are silent. POSTs
-  retry `MEMORY_INGEST_RETRIES` times (default 2) on 5xx; 4xx is final.
+  make `MEMORY_INGEST_RETRIES` total attempts (default 2) before giving up
+  on 5xx; 4xx is final.
 
   | Hook         | Max turns | Env override                  |
   | ------------ | --------- | ----------------------------- |
@@ -119,7 +122,7 @@ profile):
 | `MEMORY_API_URL`                 | `http://localhost:5201` | API base used by hooks |
 | `MEMORY_MCP_URL`                 | `http://localhost:5202` | MCP base used by `.mcp.json` |
 | `MEMORY_BEARER`                  | (resolved via memory-refresh) | Bearer token used by `.mcp.json` |
-| `MEMORY_INGEST_RETRIES`          | `2`                     | POST retry budget per hook fire |
+| `MEMORY_INGEST_RETRIES`          | `2`                     | POST attempt budget per hook fire |
 | `MEMORY_INGEST_RETRY_SLEEP`      | `1`                     | Seconds between retries |
 | `MEMORY_PRECOMPACT_MAX_TURNS`    | `20`                    | Turns captured pre-compact |
 | `MEMORY_PRECOMPACT_MAX_CHARS`    | `12000`                 | Hard byte cap on the digest |
@@ -151,6 +154,18 @@ a thin UX layer on top:
   search behavior.
 
 Use both. They compose.
+
+## Upgrading from 0.2.x to 0.3.0
+
+`MEMORY_API_KEY` is gone; auth is Bearer-only.
+
+1. Run `memory-login` once if you haven't already (cached at `~/.config/memory/auth.json` or `%APPDATA%\memory\auth.json`).
+2. Add this line to your shell rc so `.mcp.json` can resolve the bearer at Claude Code launch:
+   ```bash
+   export MEMORY_BEARER="$(memory-refresh)"
+   ```
+3. Remove `MEMORY_API_KEY` from your shell env and any `.env` overrides.
+4. Restart Claude Code. The MCP server should authenticate via Bearer.
 
 ## Migrating from `cortex` plugin (pre-v0.2.0)
 
