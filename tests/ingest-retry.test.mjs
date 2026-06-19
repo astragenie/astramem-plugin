@@ -148,16 +148,43 @@ test('stops retrying on first 2xx', async (t) => {
   t.after(() => rmSync(pluginRoot, { recursive: true, force: true }));
   const transcript = fakeTranscript();
   t.after(() => rmSync(dirname(transcript), { recursive: true, force: true }));
-  const srv = await withServer((_req, res, calls) => {
-    if (calls.count === 1) {
-      res.writeHead(503).end('{}');
-      return;
-    }
-    res
-      .writeHead(200, { 'Content-Type': 'application/json' })
-      .end(
-        '{"summary_memory_id":"x","extraction_job_id":"y","extracted_count":0,"scrub_hits":{"client":0,"server":0},"queued_extraction_types":[]}',
-      );
+  // Capture each request body so we can assert the helper isn't silently
+  // POSTing an empty payload (regression guard for the empty-body bug fixed
+  // in 461080f). withServer drains req data without buffering, so this test
+  // builds its own server inline rather than reusing the helper.
+  const capturedBodies = [];
+  const calls = { count: 0 };
+  const srv = await new Promise((resolve) => {
+    const s = createServer((req, res) => {
+      calls.count++;
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        try {
+          capturedBodies.push(JSON.parse(raw));
+        } catch {
+          capturedBodies.push({ __parse_error: true, raw });
+        }
+        if (calls.count === 1) {
+          res.writeHead(503).end('{}');
+          return;
+        }
+        res
+          .writeHead(200, { 'Content-Type': 'application/json' })
+          .end(
+            '{"summary_memory_id":"x","extraction_job_id":"y","extracted_count":0,"scrub_hits":{"client":0,"server":0},"queued_extraction_types":[]}',
+          );
+      });
+    });
+    s.listen(0, '127.0.0.1', () => {
+      const port = s.address().port;
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        calls,
+        close: () => new Promise((r) => s.close(r)),
+      });
+    });
   });
   try {
     const r = await runHook({
@@ -169,6 +196,8 @@ test('stops retrying on first 2xx', async (t) => {
     });
     assert.equal(r.status, 0, `helper should exit 0 (always); stderr=${r.stderr}`);
     assert.equal(srv.calls.count, 2);
+    const lastBody = capturedBodies[capturedBodies.length - 1];
+    assert.ok(lastBody && lastBody.event, 'helper must POST a non-empty body with event field');
   } finally {
     await srv.close();
   }
