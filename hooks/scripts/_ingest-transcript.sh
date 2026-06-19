@@ -26,6 +26,9 @@ if [ "${1:-}" = "--scrub-only" ]; then
     # Count matches first, then substitute.
     local n
     n="$(printf '%s' "$input" | grep -oE "$pattern" | wc -l | tr -d ' ')"
+    # Defensive: if `wc` returns blank (rare, but `set -u` would explode on the
+    # arithmetic compare below), default to 0.
+    n="${n:-0}"
     if [ "$n" -gt 0 ]; then
       hits=$((hits + n))
       # Use `#` as the sed delimiter — none of the four scrub patterns contain `#`,
@@ -128,16 +131,19 @@ body="$(jq -nc \
 attempt=0
 while [ "$attempt" -lt "$RETRIES" ]; do
   attempt=$((attempt + 1))
-  http_code="$(curl -sS -o /tmp/_memory_ingest_resp.$$ -w '%{http_code}' \
+  # Use mktemp so concurrent hook fires (e.g. SubagentStop + SessionEnd back-to-back)
+  # don't clobber each other's response file. $$ alone is not unique enough.
+  resp_file="$(mktemp 2>/dev/null || echo "/tmp/_memory_ingest_resp.$$")"
+  http_code="$(curl -sS -o "$resp_file" -w '%{http_code}' \
         -m 10 \
         -X POST "${MEMORY_API_URL}/ingest/transcript" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${BEARER}" \
         -d "$body" 2>/dev/null)"
-  rm -f /tmp/_memory_ingest_resp.$$ 2>/dev/null
+  rm -f "$resp_file" 2>/dev/null
   case "$http_code" in
     2*)         exit 0 ;;
-    4*)         exit 0 ;;  # final, no retry
+    4*)         echo "memory-ingest: ${http_code} (no retry)" >&2; exit 0 ;;  # final, no retry
     *)          [ "$attempt" -lt "$RETRIES" ] && sleep "$RETRY_SLEEP" ;;
   esac
 done
