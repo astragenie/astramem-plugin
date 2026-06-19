@@ -122,7 +122,7 @@ body="$(jq -nc \
   --argjson hits "$total_client_hits" \
   '{
      event: $event, project_id: $project, session_id: $session,
-     agent_type: ($agent | select(length > 0)),
+     agent_type: (if ($agent | length) > 0 then $agent else null end),
      cwd: $cwd, captured_at: $ts, turns: $turns,
      client_scrub_applied: true, client_scrub_hits: $hits,
      client_version: "0.3.0"
