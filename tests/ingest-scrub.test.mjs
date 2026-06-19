@@ -41,6 +41,8 @@ test('redacts Anthropic key', () => {
 test('redacts generic api_key= patterns', () => {
   const r = runScrub('config: api_key=ABCDEF1234567890ABCDEF more');
   assert.equal(r.hits, 1);
+  assert.match(r.text, /\[redacted:generic-secret\]/);
+  assert.doesNotMatch(r.text, /ABCDEF1234567890ABCDEF/);
 });
 
 test('passes innocuous text through', () => {

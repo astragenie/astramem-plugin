@@ -28,7 +28,10 @@ if [ "${1:-}" = "--scrub-only" ]; then
     n="$(printf '%s' "$input" | grep -oE "$pattern" | wc -l | tr -d ' ')"
     if [ "$n" -gt 0 ]; then
       hits=$((hits + n))
-      input="$(printf '%s' "$input" | sed -E "s|$pattern|$replacement|g")"
+      # Use `#` as the sed delimiter — none of the four scrub patterns contain `#`,
+      # whereas `|` collides with the alternation inside the generic-secret pattern
+      # and would prematurely close the `s///` expression.
+      input="$(printf '%s' "$input" | sed -E "s#$pattern#$replacement#g")"
     fi
   }
 
