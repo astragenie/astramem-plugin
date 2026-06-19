@@ -74,7 +74,7 @@ payload="$(cat 2>/dev/null || true)"
 command -v jq >/dev/null 2>&1 || exit 0
 
 # Need a fresh Bearer.
-BEARER="$("${CLAUDE_PLUGIN_ROOT}/bin/memory-refresh" 2>/dev/null)"
+BEARER="$("${CLAUDE_PLUGIN_ROOT:-}/bin/memory-refresh" 2>/dev/null)"
 [ -z "${BEARER:-}" ] && exit 0
 
 transcript_path="$(printf '%s' "$payload" | jq -r '.transcript_path // empty')"
