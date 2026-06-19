@@ -26,9 +26,9 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const HELPER = join(process.cwd(), 'hooks', 'scripts', '_ingest-transcript.sh');
 
@@ -97,10 +97,12 @@ function runHook({ url, event, transcriptPath, pluginRoot, retries = 2 }) {
   });
 }
 
-test('retries exactly N=2 times on 503 then gives up', async () => {
+test('retries exactly N=2 times on 503 then gives up', async (t) => {
   const pluginRoot = fakePluginRoot();
+  t.after(() => rmSync(pluginRoot, { recursive: true, force: true }));
   const transcript = fakeTranscript();
-  const srv = await withServer((req, res) => {
+  t.after(() => rmSync(dirname(transcript), { recursive: true, force: true }));
+  const srv = await withServer((_req, res) => {
     res.writeHead(503).end('{}');
   });
   try {
@@ -118,10 +120,12 @@ test('retries exactly N=2 times on 503 then gives up', async () => {
   }
 });
 
-test('does not retry on 400', async () => {
+test('does not retry on 400', async (t) => {
   const pluginRoot = fakePluginRoot();
+  t.after(() => rmSync(pluginRoot, { recursive: true, force: true }));
   const transcript = fakeTranscript();
-  const srv = await withServer((req, res) => {
+  t.after(() => rmSync(dirname(transcript), { recursive: true, force: true }));
+  const srv = await withServer((_req, res) => {
     res.writeHead(400).end('{}');
   });
   try {
@@ -139,10 +143,12 @@ test('does not retry on 400', async () => {
   }
 });
 
-test('stops retrying on first 2xx', async () => {
+test('stops retrying on first 2xx', async (t) => {
   const pluginRoot = fakePluginRoot();
+  t.after(() => rmSync(pluginRoot, { recursive: true, force: true }));
   const transcript = fakeTranscript();
-  const srv = await withServer((req, res, calls) => {
+  t.after(() => rmSync(dirname(transcript), { recursive: true, force: true }));
+  const srv = await withServer((_req, res, calls) => {
     if (calls.count === 1) {
       res.writeHead(503).end('{}');
       return;
