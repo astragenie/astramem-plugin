@@ -64,18 +64,48 @@ while [ $# -gt 0 ]; do
 done
 [ -z "$EVENT" ] && exit 0
 
-MEMORY_API_URL="${MEMORY_API_URL:-http://localhost:5201}"
+# URL: prefer ASTRAMEMORY_API_URL (profile-resolved by _load-env.sh), fall back to MEMORY_API_URL
+EFFECTIVE_API_URL="${ASTRAMEMORY_API_URL:-${MEMORY_API_URL:-http://localhost:5201}}"
 RETRIES="${MEMORY_INGEST_RETRIES:-2}"
 RETRY_SLEEP="${MEMORY_INGEST_RETRY_SLEEP:-1}"
 
 payload="$(cat 2>/dev/null || true)"
-[ -z "$payload" ] && exit 0
+[ -z "$payload" ] && {
+  if [ "${ASTRAMEMORY_HOOK_DEBUG:-0}" = "1" ]; then
+    printf '[astramemory-hook] script=%s env=%s workspace=%s url=%s key_source=%s outcome=skipped:empty_payload\n' \
+      "${ASTRAMEMORY_HOOK_SCRIPT_NAME:-_ingest-transcript}" \
+      "${_AM_ENV:-prod}" "${_AM_WORKSPACE:-unknown}" \
+      "$EFFECTIVE_API_URL" "${_AM_KEY_SOURCE:-legacy_default}" >&2
+  fi
+  exit 0
+}
 
-command -v jq >/dev/null 2>&1 || exit 0
+command -v jq >/dev/null 2>&1 || {
+  if [ "${ASTRAMEMORY_HOOK_DEBUG:-0}" = "1" ]; then
+    printf '[astramemory-hook] script=%s env=%s workspace=%s url=%s key_source=%s outcome=skipped:jq_missing\n' \
+      "${ASTRAMEMORY_HOOK_SCRIPT_NAME:-_ingest-transcript}" \
+      "${_AM_ENV:-prod}" "${_AM_WORKSPACE:-unknown}" \
+      "$EFFECTIVE_API_URL" "${_AM_KEY_SOURCE:-legacy_default}" >&2
+  fi
+  exit 0
+}
 
-# Need a fresh Bearer.
+# Auth: try Bearer from memory-refresh first; fall back to ASTRAMEMORY_API_KEY sk-... header.
 BEARER="$("${CLAUDE_PLUGIN_ROOT:-}/bin/memory-refresh" 2>/dev/null)"
-[ -z "${BEARER:-}" ] && exit 0
+AUTH_HEADER=""
+if [ -n "${BEARER:-}" ]; then
+  AUTH_HEADER="Authorization: Bearer ${BEARER}"
+elif [ -n "${ASTRAMEMORY_API_KEY:-}" ] && [ "${ASTRAMEMORY_API_KEY:-dev-bootstrap-local}" != "dev-bootstrap-local" ]; then
+  AUTH_HEADER="Authorization: Bearer ${ASTRAMEMORY_API_KEY}"
+else
+  if [ "${ASTRAMEMORY_HOOK_DEBUG:-0}" = "1" ]; then
+    printf '[astramemory-hook] script=%s env=%s workspace=%s url=%s key_source=%s outcome=skipped:no_auth\n' \
+      "${ASTRAMEMORY_HOOK_SCRIPT_NAME:-_ingest-transcript}" \
+      "${_AM_ENV:-prod}" "${_AM_WORKSPACE:-unknown}" \
+      "$EFFECTIVE_API_URL" "${_AM_KEY_SOURCE:-legacy_default}" >&2
+  fi
+  exit 0
+fi
 
 transcript_path="$(printf '%s' "$payload" | jq -r '.transcript_path // empty')"
 session_id="$(printf '%s' "$payload" | jq -r '.session_id // "unknown"')"
@@ -136,16 +166,30 @@ while [ "$attempt" -lt "$RETRIES" ]; do
   resp_file="$(mktemp 2>/dev/null || echo "/tmp/_memory_ingest_resp.$$")"
   http_code="$(curl -sS -o "$resp_file" -w '%{http_code}' \
         -m 10 \
-        -X POST "${MEMORY_API_URL}/ingest/transcript" \
+        -X POST "${EFFECTIVE_API_URL}/ingest/transcript" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer ${BEARER}" \
+        -H "${AUTH_HEADER}" \
         -d "$body" 2>/dev/null)"
   rm -f "$resp_file" 2>/dev/null
   case "$http_code" in
-    2*)         exit 0 ;;
+    2*)
+      if [ "${ASTRAMEMORY_HOOK_DEBUG:-0}" = "1" ]; then
+        printf '[astramemory-hook] script=%s env=%s workspace=%s url=%s key_source=%s outcome=ok\n' \
+          "${ASTRAMEMORY_HOOK_SCRIPT_NAME:-_ingest-transcript}" \
+          "${_AM_ENV:-prod}" "${_AM_WORKSPACE:-unknown}" \
+          "$EFFECTIVE_API_URL" "${_AM_KEY_SOURCE:-legacy_default}" >&2
+      fi
+      exit 0 ;;
     4*)         echo "memory-ingest: ${http_code} (no retry)" >&2; exit 0 ;;  # final, no retry
     *)          [ "$attempt" -lt "$RETRIES" ] && sleep "$RETRY_SLEEP" ;;
   esac
 done
+
+if [ "${ASTRAMEMORY_HOOK_DEBUG:-0}" = "1" ]; then
+  printf '[astramemory-hook] script=%s env=%s workspace=%s url=%s key_source=%s outcome=skipped:post_failed\n' \
+    "${ASTRAMEMORY_HOOK_SCRIPT_NAME:-_ingest-transcript}" \
+    "${_AM_ENV:-prod}" "${_AM_WORKSPACE:-unknown}" \
+    "$EFFECTIVE_API_URL" "${_AM_KEY_SOURCE:-legacy_default}" >&2
+fi
 
 exit 0

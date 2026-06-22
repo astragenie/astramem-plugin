@@ -62,6 +62,73 @@ Cached tokens live at `~/.config/memory/auth.json` (POSIX) or
 `%APPDATA%\memory\auth.json` (Windows). Move or delete the file to force a
 fresh `memory-login`.
 
+## Pair a workstation (device-flow)
+
+From v0.4.0 you can pair a workstation to an AstraMemory environment without
+copying API keys through clipboard or env vars.
+
+**Steps:**
+
+1. In the AstraMemory dashboard click **"Connect this machine"** — this mints a
+   short-lived claim code (`ABCD-1234`) and opens a status panel.
+2. Run the CLI in the repo you want to pair:
+
+   ```
+   # In the dashboard: click "Connect this machine" → copy code
+   memory-connect ABCD-1234 --env prod
+   ```
+
+3. The dashboard status panel flips to **✓ first event received** within seconds.
+
+**Options:**
+
+```
+memory-connect <code> [--env <env>] [--url <override>] [--workspace <name>]
+
+  --env <env>         Environment to target. Resolution order:
+                        --env flag > $ASTRAMEMORY_ENV > "prod"
+  --url <url>         Override the API URL directly (skips profiles.json lookup).
+  --workspace <name>  Workspace identifier written into the token file.
+                      Default: basename of the current working directory.
+```
+
+**Exit codes:** `0` success · `1` code expired/invalid · `2` network failure ·
+`3` filesystem write failure · `4` profile not found.
+
+### `~/.astramemory/profiles.json`
+
+Seed this file once per machine. Each key is an env name:
+
+```json
+{ "prod":  { "apiUrl": "https://api.astramemory.com" },
+  "local": { "apiUrl": "http://localhost:5201" } }
+```
+
+`memory-connect` reads `profiles.json[env].apiUrl` unless `--url` is passed.
+
+### `~/.astramemory/tokens.<env>.json`
+
+Written (atomically, preserving existing entries) after a successful redeem.
+Read by the FEAT-280 plugin hooks to resolve `apiKey` per workspace:
+
+```json
+{
+  "my-repo": {
+    "apiKey": "sk-...",
+    "label": "claim-20260622120000",
+    "tenantId": "tenant-abc123",
+    "repoPath": "/home/user/work/my-repo",
+    "pairedAt": "2026-06-22T12:00:00.000Z"
+  }
+}
+```
+
+Each key is the `workspaceId` (defaults to `basename(cwd)`). Multiple workspaces
+per env are supported — pairing a second repo appends a new key without touching
+existing entries.
+
+---
+
 ## Profiles
 
 The plugin ships two committed profiles. Pick one by setting
@@ -113,13 +180,48 @@ release flow is:
 
 ## Configuration
 
-Environment variables (all optional, defaults come from the active
-profile):
+### Profile files (v0.4.0+, recommended)
 
-| Var                              | Default (local profile) | Purpose |
+As of v0.4.0, hooks resolve the API URL and workspace key from
+`~/.astramemory/` profile files written by `memory-connect`
+(`bunx @astragenie/astra@latest connect <code>`).
+
+**`~/.astramemory/profiles.json`** — one entry per named environment:
+
+```json
+{ "prod":  { "apiUrl": "https://api.astramemory.com" },
+  "local": { "apiUrl": "http://localhost:5201" } }
+```
+
+**`~/.astramemory/tokens.<env>.json`** — per-workspace API keys, written
+automatically by `memory-connect`:
+
+```json
+{ "<workspace>": { "apiKey": "sk-...", "label": "my-project", "repoPath": "/work/my-repo" } }
+```
+
+`<workspace>` is the basename of the repo directory (e.g. `memory` for
+`/work/mega/memory`). The active env is selected by `ASTRAMEMORY_ENV`
+(default: `prod`).
+
+Resolution order (highest precedence first):
+
+1. Explicit `ASTRAMEMORY_API_URL` / `ASTRAMEMORY_API_KEY` env vars
+   (**deprecated** — accepted through v1.6, removed at v1.7; see migration note below).
+2. Profile file lookup: `profiles.json[$ASTRAMEMORY_ENV].apiUrl` +
+   `tokens.$ASTRAMEMORY_ENV.json[<workspace>].apiKey`.
+3. Hard defaults: `http://localhost:5201` / `dev-bootstrap-local`.
+
+### Environment variables
+
+| Var                              | Default                 | Purpose |
 | -------------------------------- | ----------------------- | ------- |
-| `MEMORY_ENV`                     | (none)                  | Selects the `.env.<profile>` file |
-| `MEMORY_API_URL`                 | `http://localhost:5201` | API base used by hooks |
+| `ASTRAMEMORY_ENV`                | `prod`                  | Selects the active profile in `~/.astramemory/profiles.json` |
+| `ASTRAMEMORY_API_URL`            | (from profile or localhost) | Override API base URL (deprecated — use profile files) |
+| `ASTRAMEMORY_API_KEY`            | (from profile or default) | Override API key (deprecated — use profile files) |
+| `ASTRAMEMORY_HOOK_DEBUG`         | `0`                     | Set to `1` to emit one stderr line per hook with resolved env/url/key_source/outcome |
+| `MEMORY_ENV`                     | (none)                  | Selects the legacy `.env.<profile>` file (existing plugin-file profiles) |
+| `MEMORY_API_URL`                 | `http://localhost:5201` | Legacy API base (overridden by `ASTRAMEMORY_API_URL` if set) |
 | `MEMORY_MCP_URL`                 | `http://localhost:5202` | MCP base used by `.mcp.json` |
 | `MEMORY_BEARER`                  | (resolved via memory-refresh) | Bearer token used by `.mcp.json` |
 | `MEMORY_INGEST_RETRIES`          | `2`                     | POST attempt budget per hook fire |
@@ -130,6 +232,40 @@ profile):
 | `MEMORY_SESSION_MAX_CHARS`       | `20000`                 | Hard byte cap on the digest |
 | `MEMORY_SUBAGENT_MAX_TURNS`      | `12`                    | Turns captured for SubagentStop |
 | `MEMORY_SUBAGENT_MAX_CHARS`      | `8000`                  | Hard byte cap on SubagentStop digest |
+
+### Hook debug output
+
+Set `ASTRAMEMORY_HOOK_DEBUG=1` in your shell to trace hook resolution:
+
+```
+[astramemory-hook] script=pre-compact-capture env=prod workspace=memory url=https://api.astramemory.com key_source=profile outcome=ok
+```
+
+Fields: `script` — which hook fired; `env` — active profile name;
+`workspace` — repo basename; `url` — resolved API URL (never the key);
+`key_source` — `env` (explicit env var) | `profile` | `legacy_default`;
+`outcome` — `ok` | `skipped:<reason>`.
+
+### Migrating from env-vars to profile files
+
+> **Deprecation notice:** `ASTRAMEMORY_API_URL` and `ASTRAMEMORY_API_KEY`
+> raw env vars are accepted through **v1.6** and will be **removed at v1.7**.
+> Migrate before upgrading past v1.6.
+
+To migrate, run `memory-connect` (FEAT-279 CLI) once per workstation:
+
+```bash
+bunx @astragenie/astra@latest connect <code>
+```
+
+`memory-connect` writes `~/.astramemory/profiles.json` and
+`~/.astramemory/tokens.prod.json` automatically. After running it:
+
+1. Verify hooks resolve correctly: `ASTRAMEMORY_HOOK_DEBUG=1` in your shell,
+   then trigger a PreCompact — look for `key_source=profile` in the debug line.
+2. Remove `ASTRAMEMORY_API_URL` and `ASTRAMEMORY_API_KEY` from your shell rc
+   and any `.env` overrides.
+3. Restart Claude Code.
 
 ## Requirements
 

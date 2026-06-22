@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.4.0 — 2026-06-22
+
+### Added
+- **`memory-connect` CLI** (FEAT-279): redeems a dashboard claim code via
+  `POST /claims/<code>/redeem` and stores the resulting `ApiKey` in
+  `~/.astramemory/tokens.<env>.json` keyed by `workspaceId`. Fires a one-shot
+  `POST /memories` handshake envelope to flip the dashboard SSE
+  `first_event_received` event. Atomic write (tmp + rename) preserves existing
+  workspace entries on append. `ApiKey` masked to last 4 chars in all output;
+  structured JSON observability line written to stderr per attempt.
+  Usage: `memory-connect <code> [--env prod] [--url <override>] [--workspace <name>]`.
+  Exit codes: `0` success · `1` code expired · `2` network · `3` fs · `4` profile missing.
+- **`lib/profileResolver.mjs`** (FEAT-279): shared helpers `resolveProfile(env)`,
+  `resolveToken(env, workspaceId)`, `writeToken(env, workspaceId, entry)`.
+  `ASTRAMEMORY_HOME` env var overrides `~/.astramemory` for tests and CI.
+- **Profile-file env resolution** (FEAT-280 Part B): hook scripts now resolve
+  `ASTRAMEMORY_API_URL` and `ASTRAMEMORY_API_KEY` from
+  `~/.astramemory/profiles.json` + `~/.astramemory/tokens.<env>.json` written
+  by `memory-connect` (FEAT-279). Resolution order: explicit env var → profile
+  file → hard default. Supports multi-env workstations via `ASTRAMEMORY_ENV`
+  (default `prod`).
+- **Hook debug tracing**: set `ASTRAMEMORY_HOOK_DEBUG=1` to emit a one-line
+  stderr log per hook fire (`[astramemory-hook] script=... env=... workspace=...
+  url=... key_source=... outcome=...`). Key value is never logged.
+- **`ASTRAMEMORY_API_KEY` auth path**: when no Bearer JWT is available from
+  `memory-refresh`, hooks fall back to the profile-resolved API key as the
+  Authorization header.
+
+### Deprecated
+- `ASTRAMEMORY_API_URL` and `ASTRAMEMORY_API_KEY` raw env vars accepted through
+  v1.6 (this release). **Will be removed at v1.7.** Migrate using
+  `memory-connect <code>` — see README "Pair a workstation" section.
+
 ## 0.3.0 — 2026-06-19
 
 ### Breaking

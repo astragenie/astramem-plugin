@@ -6,7 +6,8 @@
   "bin": {
     "memory-login": "./bin/memory-login",
     "memory-refresh": "./bin/memory-refresh",
-    "memory-token": "./bin/memory-token"
+    "memory-token": "./bin/memory-token",
+    "memory-connect": "./bin/memory-connect"
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs"

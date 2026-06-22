@@ -8,6 +8,7 @@ set +e
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export ASTRAMEMORY_HOOK_SCRIPT_NAME="subagent-stop-capture"
 . "$SCRIPT_DIR/_load-env.sh"
 
 MAX_TURNS="${MEMORY_SUBAGENT_MAX_TURNS:-12}"
