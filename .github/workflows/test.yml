@@ -9,6 +9,7 @@ jobs:
     name: Node tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
@@ -17,12 +18,13 @@ jobs:
         with:
           node-version: '20'
       - name: Run node tests
-        run: node --test tests/*.test.mjs
+        run: node --test tests/*.test.mjs --test-timeout=60000
 
   hook-tests:
     name: Hook env-resolution tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
