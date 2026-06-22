@@ -1,6 +1,6 @@
 {
   "name": "memory-plugin",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "description": "AstraMemory Claude Code plugin: hooks + CLI for the AstraMemory service.",
   "type": "module",
   "bin": {

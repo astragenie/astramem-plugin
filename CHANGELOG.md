@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1 — 2026-06-22
+
+### Fixed
+- **Hook env-resolution test harness** (FEAT-283): fixed AC13 test `bash -c` invocation — `cwd=` variable assignment before `. builtin` now uses `;` separator so `cwd` is set in the sourced shell scope (builtin prefix-assignment form does not propagate for dot/source). All 13 AC assertions now pass cross-platform.
+- **CLI test infrastructure** (FEAT-282 partial): `withServer.close()` now calls `closeAllConnections()` (Node ≥18.2) before `srv.close()` so keep-alive sockets are torn down promptly on Windows; `run()` spawnSync wraps every CLI invocation with a 15s `timeout` so a stalled subprocess no longer blocks the suite for 304s; expired-path test server sends `Connection: close` header. Expired-path assertion harden + final Windows hang investigation still open.
+
+### Added
+- **CI workflow** (FEAT-283): added `.github/workflows/test.yml` with `node-tests` + `hook-tests` jobs, each on `ubuntu-latest / windows-latest / macos-latest` matrix.
+
 ## 0.4.0 — 2026-06-22
 
 ### Added

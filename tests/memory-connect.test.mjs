@@ -56,7 +56,12 @@ function withServer(handler) {
       resolve({
         url: `http://127.0.0.1:${port}`,
         calls,
-        close: () => new Promise((r) => srv.close(r)),
+        close: () => {
+          // closeAllConnections() (Node ≥18.2) tears down keep-alive sockets
+          // on Windows so srv.close() resolves promptly.
+          if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections();
+          return new Promise((r) => srv.close(r));
+        },
       });
     });
   });
@@ -101,6 +106,7 @@ function run(args, { home, cwd, env: extraEnv = {} } = {}) {
     encoding: 'utf8',
     cwd: cwd ?? repoRoot,
     env,
+    timeout: 15000,
   });
 }
 
@@ -509,7 +515,7 @@ test('structured log: stderr contains JSON log line for expired path', async (t)
   const ENV = 'logtest2';
 
   const srv = await withServer((_req, res) => {
-    res.writeHead(410, { 'Content-Type': 'application/json' });
+    res.writeHead(410, { 'Content-Type': 'application/json', 'Connection': 'close' });
     res.end('{"error":"claim_gone"}');
   });
   t.after(() => srv.close());

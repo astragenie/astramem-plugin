@@ -143,7 +143,7 @@ debug_out="$(
   unset ASTRAMEMORY_API_URL ASTRAMEMORY_API_KEY ASTRAMEMORY_ENV 2>/dev/null || true
   HOME="$home13" ASTRAMEMORY_ENV=prod ASTRAMEMORY_HOOK_DEBUG=1 \
   ASTRAMEMORY_HOOK_SCRIPT_NAME=pre-compact-capture \
-    bash -c 'cwd=/work/mega/memory . '"$LOAD_ENV"'' 2>&1
+    bash -c 'cwd=/work/mega/memory; . '"$LOAD_ENV"'' 2>&1
 )"
 
 # Should contain [astramemory-hook] prefix
