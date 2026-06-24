@@ -19,7 +19,8 @@ jobs:
         with:
           node-version: '20'
       - name: Run node tests
-        run: node --test tests/*.test.mjs --test-timeout=60000
+        shell: bash
+        run: node --test --test-timeout=60000 tests/*.test.mjs
 
   hook-tests:
     name: Hook env-resolution tests (${{ matrix.os }})
