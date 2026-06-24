@@ -6,29 +6,21 @@ on:
 
 jobs:
   node-tests:
-    name: Node tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Run node tests
-        run: node --test tests/*.test.mjs --test-timeout=60000
+    name: Node tests
+    uses: astragenie/common/.github/workflows/reusable-plugin-ci.yml@main
+    with:
+      os-matrix: '["ubuntu-latest","windows-latest","macos-latest"]'
+      node-version: '20'
+      install-cmd: ''
+      bun-commands: |
+        node --test tests/*.test.mjs --test-timeout=60000
 
   hook-tests:
-    name: Hook env-resolution tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run hook env-resolution tests
-        shell: bash
-        run: bash tests/hooks-env-resolution.test.sh
+    name: Hook env-resolution tests
+    uses: astragenie/common/.github/workflows/reusable-plugin-ci.yml@main
+    with:
+      os-matrix: '["ubuntu-latest","windows-latest","macos-latest"]'
+      node-version: '20'
+      install-cmd: ''
+      bun-commands: |
+        bash tests/hooks-env-resolution.test.sh
