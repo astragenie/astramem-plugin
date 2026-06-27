@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
-// astramem — AstraMemory CLI dispatcher (Wave 1 stub)
+// astramem — AstraMemory CLI dispatcher (Wave 2 Track C)
 // Subcommands: ingest | recall | remember | health | config | doctor | connect
-// Wave 2/3 will wire each subcommand to its implementation.
 // Global: --provider local|saas|auto  (parsed, stored, passed to subcommands)
 //         --help | -h                  (prints usage)
 //         --version                    (prints 0.4.0-rc.1)
@@ -79,7 +78,8 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const subcommand = remaining[0]!;
+  const subcommand = remaining[0]! as Subcommand;
+  const subArgs = remaining.slice(1);
 
   if (!(SUBCOMMANDS as readonly string[]).includes(subcommand)) {
     process.stderr.write(`astramem: unknown subcommand '${subcommand}'.\n\n`);
@@ -87,9 +87,50 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const providerNote = provider ? ` (provider=${provider})` : '';
-  process.stdout.write(`${subcommand}: not yet wired (Wave 2/3)${providerNote}\n`);
-  process.exit(0);
+  // Resolve --provider auto → undefined (selector handles auto-probe internally)
+  const providerFlag = provider === 'auto' ? undefined : (provider ?? undefined) as 'local' | 'saas' | undefined;
+
+  let exitCode = 0;
+
+  switch (subcommand) {
+    case 'ingest': {
+      const { runIngest } = await import('../src/cli/ingest.ts');
+      exitCode = await runIngest(subArgs, { provider: providerFlag });
+      break;
+    }
+    case 'recall': {
+      const { runRecall } = await import('../src/cli/recall.ts');
+      exitCode = await runRecall(subArgs, { provider: providerFlag });
+      break;
+    }
+    case 'remember': {
+      const { runRemember } = await import('../src/cli/remember.ts');
+      exitCode = await runRemember(subArgs, { provider: providerFlag });
+      break;
+    }
+    case 'health': {
+      const { runHealth } = await import('../src/cli/health.ts');
+      exitCode = await runHealth(subArgs, { provider: providerFlag });
+      break;
+    }
+    case 'config': {
+      const { runConfig } = await import('../src/cli/config-cmd.ts');
+      exitCode = await runConfig(subArgs);
+      break;
+    }
+    case 'doctor': {
+      const { runDoctor } = await import('../src/cli/doctor.ts');
+      exitCode = await runDoctor();
+      break;
+    }
+    case 'connect': {
+      const { runConnect } = await import('../src/cli/connect.ts');
+      exitCode = await runConnect();
+      break;
+    }
+  }
+
+  process.exit(exitCode);
 }
 
 main().catch((e: unknown) => {

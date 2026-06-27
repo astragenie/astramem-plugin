@@ -12,7 +12,7 @@
  * All entries are scrubbed before writing.
  * Errors are swallowed — this is a fail-silent log.
  */
-import { mkdirSync, statSync, renameSync, appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { unifiedConfigDir } from './datadir.ts';
 import { scrub } from './scrub.ts';
@@ -56,5 +56,20 @@ export function appendIngestLog(entry: unknown): void {
     appendFileSync(file, line, 'utf-8');
   } catch {
     // Fail-silent: never propagate log errors to callers.
+  }
+}
+
+/**
+ * Read the last N lines from the ingest log.
+ * Returns empty array if the log does not exist or is unreadable.
+ */
+export function readIngestLogTail(n: number): string[] {
+  try {
+    const file = logPath();
+    if (!existsSync(file)) return [];
+    const lines = readFileSync(file, 'utf-8').split('\n').filter(Boolean);
+    return lines.slice(-n);
+  } catch {
+    return [];
   }
 }
