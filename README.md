@@ -1,5 +1,9 @@
 # @astragenie/astramem-plugin
 
+![test](https://github.com/astragenie/astramem-plugin/actions/workflows/test.yml/badge.svg)
+![release](https://img.shields.io/github/v/tag/astragenie/astramem-plugin?label=release&sort=semver)
+![license](https://img.shields.io/github/license/astragenie/astramem-plugin)
+
 Claude Code plugin bridging the `astramem` CLI, provider selector, and auto-capture hooks to
 AstraMemory — local or cloud.
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0-wave3 — 2026-06-27 (integration + docs)
+## 0.4.0 — 2026-06-27
 
 ### Renamed
 - **Package renamed** to `@astragenie/astramem-plugin` (was `@astragenie/memory-plugin`).
@@ -35,12 +35,20 @@
   as shims.
 - **`commands/recall.md` + `commands/remember.md`** rewritten to invoke `bin/astramem` via
   `bun ${CLAUDE_PLUGIN_ROOT}/bin/astramem recall|remember` instead of the MCP call path.
+- **Cross-OS Bun CI** (Wave 4): `.github/workflows/test.yml` replaced with Bun matrix
+  (`ubuntu-latest`, `macos-latest`, `windows-latest`) × (`bun 1.1.30`, `latest`).
+  Steps: checkout → setup-bun@v2 → `bun install --frozen-lockfile` → `bun run typecheck`
+  → `bun run test` (Vitest). `fail-fast: false`.
+- **Lint workflow**: `.github/workflows/lint.yml` added — fast type-check on PR + push to
+  main (ubuntu-latest, latest Bun).
+- **Dependabot config**: `.github/dependabot.yml` added — npm + actions weekly updates,
+  major version bumps grouped and disabled by default.
 
 ### Deprecated
 - `ASTRAMEMORY_API_URL` and `ASTRAMEMORY_API_KEY` raw env vars accepted through v1.6;
   **removed at v1.7**. Migrate: run `astramem connect <code>` to write profile files.
 
-## 0.4.1 — 2026-06-22
+## 0.3.2 — 2026-06-22
 
 ### Fixed
 - **Hook env-resolution test harness** (FEAT-283): fixed AC13 test `bash -c` invocation — `cwd=` variable assignment before `. builtin` now uses `;` separator so `cwd` is set in the sourced shell scope (builtin prefix-assignment form does not propagate for dot/source). All 13 AC assertions now pass cross-platform.
@@ -49,7 +57,7 @@
 ### Added
 - **CI workflow** (FEAT-283): added `.github/workflows/test.yml` with `node-tests` + `hook-tests` jobs, each on `ubuntu-latest / windows-latest / macos-latest` matrix.
 
-## 0.4.0 — 2026-06-22
+## 0.3.1 — 2026-06-22
 
 ### Added
 - **`memory-connect` CLI** (FEAT-279): redeems a dashboard claim code via
