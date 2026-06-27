@@ -62,6 +62,20 @@ Cached tokens live at `~/.config/memory/auth.json` (POSIX) or
 `%APPDATA%\memory\auth.json` (Windows). Move or delete the file to force a
 fresh `memory-login`.
 
+## Local backend (optional)
+
+The plugin can be redirected from the AstraMemory SaaS endpoint to a local
+daemon. See [astramemory-local](https://github.com/astragenie/astramemory-local)
+for setup. Once installed:
+
+```bash
+export MEMORY_API_URL=http://127.0.0.1:7777
+export MEMORY_BEARER=$(astra-memory token print)
+```
+
+Then restart Claude Code. All hooks continue to function unchanged — they
+POST to the local daemon instead of the cloud.
+
 ## Pair a workstation (device-flow)
 
 From v0.4.0 you can pair a workstation to an AstraMemory environment without
