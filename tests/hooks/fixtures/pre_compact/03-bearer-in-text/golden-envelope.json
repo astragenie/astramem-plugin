@@ -1,0 +1,22 @@
+{
+  "event": "pre_compact",
+  "session_id": "aabbccdd-1111-2222-3333-000000000003",
+  "project_id": "secret-project",
+  "cwd": "/home/user/projects/secret-project",
+  "captured_at": "__SENTINEL_CAPTURED_AT__",
+  "turns": [
+    {
+      "role": "user",
+      "text": "My API token is [REDACTED:bearer] please check if it works",
+      "ts": "2026-06-29T11:01:00.000Z"
+    },
+    {
+      "role": "assistant",
+      "text": "I can see you shared a token. I will not log it.",
+      "ts": "2026-06-29T11:01:10.000Z"
+    }
+  ],
+  "client_scrub_applied": true,
+  "client_scrub_hits": 1,
+  "client_version": "__SENTINEL_CLIENT_VERSION__"
+}

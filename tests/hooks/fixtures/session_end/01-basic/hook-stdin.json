@@ -1,0 +1,6 @@
+{
+  "session_id": "aabbccdd-1111-2222-3333-000000000004",
+  "transcript_path": "__FIXTURE_TRANSCRIPT_PATH__",
+  "cwd": "/home/user/projects/another-project",
+  "hook_event_name": "SessionEnd"
+}

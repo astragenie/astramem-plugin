@@ -1,0 +1,5 @@
+{"role":"system","content":"You are a planning assistant.","timestamp":"2026-06-29T14:00:00.000Z"}
+{"role":"user","content":"Let's plan the sprint for next week.","timestamp":"2026-06-29T14:01:00.000Z"}
+{"role":"assistant","content":"Sure. What are the top three priorities?","timestamp":"2026-06-29T14:01:08.000Z"}
+{"role":"user","content":"Finish the auth module, write integration tests, deploy to staging.","timestamp":"2026-06-29T14:02:00.000Z"}
+{"role":"assistant","content":"Sprint plan saved. Auth first, then tests, then deploy.","timestamp":"2026-06-29T14:02:12.000Z"}

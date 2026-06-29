@@ -1,0 +1,22 @@
+{
+  "event": "subagent_stop",
+  "session_id": "aabbccdd-1111-2222-3333-000000000005",
+  "project_id": "my-project",
+  "cwd": "/home/user/projects/my-project",
+  "captured_at": "__SENTINEL_CAPTURED_AT__",
+  "turns": [
+    {
+      "role": "user",
+      "text": "Run the build and report results.",
+      "ts": "2026-06-29T15:01:00.000Z"
+    },
+    {
+      "role": "assistant",
+      "text": "Build succeeded. All 42 tests passed.",
+      "ts": "2026-06-29T15:01:30.000Z"
+    }
+  ],
+  "client_scrub_applied": true,
+  "client_scrub_hits": 0,
+  "client_version": "__SENTINEL_CLIENT_VERSION__"
+}

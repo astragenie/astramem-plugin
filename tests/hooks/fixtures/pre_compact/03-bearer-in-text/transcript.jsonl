@@ -1,0 +1,3 @@
+{"role":"system","content":"You are a security auditor.","timestamp":"2026-06-29T11:00:00.000Z"}
+{"role":"user","content":"My API token is Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef please check if it works","timestamp":"2026-06-29T11:01:00.000Z"}
+{"role":"assistant","content":"I can see you shared a token. I will not log it.","timestamp":"2026-06-29T11:01:10.000Z"}

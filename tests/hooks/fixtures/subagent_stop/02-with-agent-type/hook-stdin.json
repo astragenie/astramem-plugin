@@ -1,0 +1,14 @@
+{
+  "session_id": "aabbccdd-1111-2222-3333-000000000006",
+  "transcript_path": "__FIXTURE_TRANSCRIPT_PATH__",
+  "cwd": "/home/user/projects/astramemory-plugin",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "a67acb0829366fbdf",
+  "agent_type": "crew:aiplugin-dev",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "__FIXTURE_TRANSCRIPT_PATH__",
+  "last_assistant_message": "DONE: shipped Slice 2 fixtures.",
+  "background_tasks": [],
+  "session_crons": []
+}

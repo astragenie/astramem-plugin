@@ -1,0 +1,33 @@
+{
+  "event": "subagent_stop",
+  "session_id": "aabbccdd-1111-2222-3333-000000000006",
+  "project_id": "astramemory-plugin",
+  "agent_type": "crew:aiplugin-dev",
+  "cwd": "/home/user/projects/astramemory-plugin",
+  "captured_at": "__SENTINEL_CAPTURED_AT__",
+  "turns": [
+    {
+      "role": "user",
+      "text": "Implement Slice 2: hook payload fixture corpus.",
+      "ts": "2026-06-29T16:01:00.000Z"
+    },
+    {
+      "role": "assistant",
+      "text": "Starting investigation of hook stdin shape and existing CLI.",
+      "ts": "2026-06-29T16:01:05.000Z"
+    },
+    {
+      "role": "user",
+      "text": "Confirmed the SubagentStop payload shape. Proceeding with fixtures.",
+      "ts": "2026-06-29T16:02:00.000Z"
+    },
+    {
+      "role": "assistant",
+      "text": "DONE: shipped Slice 2 fixtures. 6 fixtures across 3 event types, all tests green.",
+      "ts": "2026-06-29T16:45:00.000Z"
+    }
+  ],
+  "client_scrub_applied": true,
+  "client_scrub_hits": 0,
+  "client_version": "__SENTINEL_CLIENT_VERSION__"
+}

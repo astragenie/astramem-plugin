@@ -1,0 +1,7 @@
+{
+  "session_id": "aabbccdd-1111-2222-3333-000000000001",
+  "transcript_path": "__FIXTURE_TRANSCRIPT_PATH__",
+  "cwd": "/home/user/projects/my-project",
+  "hook_event_name": "PreCompact",
+  "source": "pre_compact"
+}

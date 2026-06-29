@@ -1,0 +1,37 @@
+{
+  "event": "pre_compact",
+  "session_id": "aabbccdd-1111-2222-3333-000000000002",
+  "project_id": "big-project",
+  "cwd": "/home/user/projects/big-project",
+  "captured_at": "__SENTINEL_CAPTURED_AT__",
+  "turns": [
+    {
+      "role": "user",
+      "text": "Turn 11: I will add tests now.",
+      "ts": "2026-06-29T09:06:00.000Z"
+    },
+    {
+      "role": "assistant",
+      "text": "Turn 12: Good plan, start with the happy path.",
+      "ts": "2026-06-29T09:06:10.000Z"
+    },
+    {
+      "role": "user",
+      "text": "Turn 13: Done, tests pass.",
+      "ts": "2026-06-29T09:07:00.000Z"
+    },
+    {
+      "role": "assistant",
+      "text": "Turn 14: Excellent, the PR is ready to merge.",
+      "ts": "2026-06-29T09:07:10.000Z"
+    },
+    {
+      "role": "user",
+      "text": "Turn 15: Merging now, thanks.",
+      "ts": "2026-06-29T09:08:00.000Z"
+    }
+  ],
+  "client_scrub_applied": true,
+  "client_scrub_hits": 0,
+  "client_version": "__SENTINEL_CLIENT_VERSION__"
+}

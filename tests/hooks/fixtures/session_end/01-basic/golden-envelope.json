@@ -1,0 +1,32 @@
+{
+  "event": "session_end",
+  "session_id": "aabbccdd-1111-2222-3333-000000000004",
+  "project_id": "another-project",
+  "cwd": "/home/user/projects/another-project",
+  "captured_at": "__SENTINEL_CAPTURED_AT__",
+  "turns": [
+    {
+      "role": "user",
+      "text": "Let's plan the sprint for next week.",
+      "ts": "2026-06-29T14:01:00.000Z"
+    },
+    {
+      "role": "assistant",
+      "text": "Sure. What are the top three priorities?",
+      "ts": "2026-06-29T14:01:08.000Z"
+    },
+    {
+      "role": "user",
+      "text": "Finish the auth module, write integration tests, deploy to staging.",
+      "ts": "2026-06-29T14:02:00.000Z"
+    },
+    {
+      "role": "assistant",
+      "text": "Sprint plan saved. Auth first, then tests, then deploy.",
+      "ts": "2026-06-29T14:02:12.000Z"
+    }
+  ],
+  "client_scrub_applied": true,
+  "client_scrub_hits": 0,
+  "client_version": "__SENTINEL_CLIENT_VERSION__"
+}
