@@ -6,7 +6,7 @@
  * APPDATA / HOME redirected so log writes are isolated.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runIngestTranscript } from '../../src/cli/ingest-transcript.ts';

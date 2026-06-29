@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TranscriptIngestPayloadSchema } from '../contracts/wire.ts';
 import type { TranscriptIngestPayload, TranscriptTurn } from '../contracts/wire.ts';
-import { scrub } from '../lib/scrub.ts';
+import { scrub, BEARER_RE } from '../lib/scrub.ts';
 import { appendIngestLog } from '../lib/log.ts';
 import { resolveProvider } from '../lib/selector.ts';
 import type { Provider } from '../contracts/selector.ts';
@@ -246,13 +246,14 @@ export async function runIngestTranscript(
   // Truncate oldest-first to fit maxChars
   const truncated = truncateToMaxChars(tailed, args.maxChars);
 
-  // Apply scrub per turn text; count total hits across all turns
-  const BEARER_RE = /Bearer\s+[A-Fa-f0-9]{32,128}/gi;
+  // Apply scrub per turn text via src/lib/scrub.ts (single source of truth —
+  // §5.3 scrub-parity gate compares this against bash _ingest-transcript.sh).
+  // Hit count uses the same exported BEARER_RE so it cannot drift.
   let totalScrubHits = 0;
   const scrubbedTurns: TranscriptTurn[] = truncated.map((t) => {
     const matches = t.text.match(BEARER_RE);
     totalScrubHits += matches?.length ?? 0;
-    const scrubbedText = t.text.replace(BEARER_RE, '[REDACTED:bearer]');
+    const scrubbedText = scrub(t.text) as string;
     const turn: TranscriptTurn = {
       role: t.role as 'user' | 'assistant',
       text: scrubbedText,

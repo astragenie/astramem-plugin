@@ -10,7 +10,7 @@
  *       truncate any string field > 200 chars.
  */
 
-const BEARER_RE = /Bearer\s+[A-Fa-f0-9]{32,128}/gi;
+export const BEARER_RE = /Bearer\s+[A-Fa-f0-9]{32,128}/gi;
 const SENSITIVE_KEY_RE = /api[_-]?key|token|bearer|secret|password/i;
 const MAX_STR_LEN = 200;
 
