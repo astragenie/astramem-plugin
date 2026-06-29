@@ -13,7 +13,7 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 
 // ---------------------------------------------------------------------------
 // Platform guard — skip if bash not available on Win32
