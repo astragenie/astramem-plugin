@@ -94,9 +94,15 @@ export const TranscriptIngestPayloadSchema = z.object({
   cwd: z.string().optional(),
   captured_at: z.string(), // ISO-8601
   turns: z.array(TranscriptTurnSchema),
+  /** @deprecated use client_scrub_version + client_scrub_hits_by_label (v0.7.0 removal) */
   client_scrub_applied: z.boolean(),
+  /** @deprecated use client_scrub_hits_by_label sum (v0.7.0 removal) */
   client_scrub_hits: z.number().int().nonnegative(),
   client_version: z.string(),
+  /** Scrubber version constant — consumers can assert minimum version. */
+  client_scrub_version: z.string(),
+  /** Per-label hit counts from scrubWithLabels() across all turns. */
+  client_scrub_hits_by_label: z.record(z.string(), z.number().int().nonnegative()).optional(),
 });
 
 export type TranscriptIngestPayload = z.infer<typeof TranscriptIngestPayloadSchema>;

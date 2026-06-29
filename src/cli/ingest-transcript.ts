@@ -7,7 +7,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TranscriptIngestPayloadSchema } from '../contracts/wire.ts';
 import type { TranscriptIngestPayload, TranscriptTurn } from '../contracts/wire.ts';
-import { scrub, BEARER_RE } from '../lib/scrub.ts';
+import { scrubWithLabels, SCRUB_VERSION } from '../lib/scrub.ts';
 import { appendIngestLog } from '../lib/log.ts';
 import { resolveProvider } from '../lib/selector.ts';
 import type { Provider } from '../contracts/selector.ts';
@@ -246,14 +246,16 @@ export async function runIngestTranscript(
   // Truncate oldest-first to fit maxChars
   const truncated = truncateToMaxChars(tailed, args.maxChars);
 
-  // Apply scrub per turn text via src/lib/scrub.ts (single source of truth —
-  // §5.3 scrub-parity gate compares this against bash _ingest-transcript.sh).
-  // Hit count uses the same exported BEARER_RE so it cannot drift.
+  // Apply canonical scrub per turn text via src/lib/scrub.ts.
+  // scrubWithLabels() is the single source of truth — tracks per-label hit counts.
   let totalScrubHits = 0;
+  const aggregatedHitsByLabel: Record<string, number> = {};
   const scrubbedTurns: TranscriptTurn[] = truncated.map((t) => {
-    const matches = t.text.match(BEARER_RE);
-    totalScrubHits += matches?.length ?? 0;
-    const scrubbedText = scrub(t.text) as string;
+    const { output: scrubbedText, hitsByLabel } = scrubWithLabels(t.text);
+    for (const [label, count] of Object.entries(hitsByLabel)) {
+      aggregatedHitsByLabel[label] = (aggregatedHitsByLabel[label] ?? 0) + count;
+      totalScrubHits += count;
+    }
     const turn: TranscriptTurn = {
       role: t.role as 'user' | 'assistant',
       text: scrubbedText,
@@ -274,6 +276,8 @@ export async function runIngestTranscript(
     turns: scrubbedTurns,
     client_scrub_applied: true,
     client_scrub_hits: totalScrubHits,
+    client_scrub_version: SCRUB_VERSION,
+    client_scrub_hits_by_label: aggregatedHitsByLabel,
     client_version: clientVersion,
     ...(args.agentType !== undefined ? { agent_type: args.agentType } : {}),
     ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
