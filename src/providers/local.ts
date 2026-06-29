@@ -4,9 +4,9 @@
  * Implements MemoryProvider against the local daemon running at
  * http://127.0.0.1:7777 (or config.local.url / MEMORY_API_URL_LOCAL).
  *
- * Bearer is read from lib/secrets.ts (reads `<unifiedConfigDir()>/secrets.env`
- * populated by astramem-local). Track B owns the full secrets reader;
- * this provider imports from the canonical path.
+ * Bearer is read from src/lib/secrets.ts — synchronous reader that parses
+ * `<unifiedConfigDir()>/secrets.env` (populated by astramem-local) with
+ * MEMORY_BEARER env-var fallback.
  *
  * Timeouts:
  *   ingest  — 2 s (fire-and-forget; retries 1× on 5xx / network error)
@@ -28,7 +28,7 @@ import type {
 } from '../contracts/wire.ts';
 import { RecallResponseSchema, HealthResponseSchema } from '../contracts/wire.ts';
 import { DeterministicError, TransientError } from '../lib/errors.ts';
-import { readLocalBearer } from '../../lib/secrets.ts';
+import { readLocalBearer } from '../lib/secrets.ts';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -70,7 +70,7 @@ async function fetchWithTimeout(
 
 /** Build common headers (Authorization never logged — scrub applied upstream). */
 async function buildHeaders(): Promise<Record<string, string>> {
-  const bearer = await readLocalBearer();
+  const bearer = readLocalBearer();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json',

@@ -7,6 +7,19 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+// Mock datadir so readLocalBearer cannot fall into a real secrets.env on the
+// host machine — keeps the "no bearer" test deterministic.
+const _tmpConfigDir: string = mkdtempSync(join(tmpdir(), 'astramem-local-provider-test-'));
+vi.mock('../../src/lib/datadir.ts', () => ({
+  unifiedConfigDir: () => _tmpConfigDir,
+  legacyConfigDir: () => join(_tmpConfigDir, 'legacy-xdg'),
+  legacyAstramemPath: () => join(_tmpConfigDir, 'legacy-astramem'),
+}));
+
 import { LocalProvider } from '../../src/providers/local.ts';
 import { runProviderContract, SAMPLE_INGEST, SAMPLE_RECALL } from './_contract.ts';
 import { DeterministicError, TransientError } from '../../src/lib/errors.ts';
