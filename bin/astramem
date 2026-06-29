@@ -7,7 +7,7 @@
 
 const VERSION = '0.4.0';
 
-const SUBCOMMANDS = ['ingest', 'recall', 'remember', 'health', 'config', 'doctor', 'connect'] as const;
+const SUBCOMMANDS = ['ingest', 'ingest-transcript', 'recall', 'remember', 'health', 'config', 'doctor', 'connect'] as const;
 type Subcommand = typeof SUBCOMMANDS[number];
 type Provider = 'local' | 'saas' | 'auto';
 
@@ -17,8 +17,9 @@ astramem — AstraMemory CLI v${VERSION}
 Usage: astramem [--provider local|saas|auto] <subcommand> [options]
 
 Subcommands:
-  ingest     Ingest a payload into AstraMemory (fire-and-forget)
-  recall     Recall memories matching a query
+  ingest              Ingest a payload into AstraMemory (fire-and-forget)
+  ingest-transcript   Ingest a JSONL transcript file (fire-and-forget; hook shim target)
+  recall              Recall memories matching a query
   remember   Store a new memory item
   health     Probe the selected provider's /health endpoint
   config     Get or set configuration (config get [key] | config set <key> <val>)
@@ -96,6 +97,11 @@ async function main(): Promise<void> {
     case 'ingest': {
       const { runIngest } = await import('../src/cli/ingest.ts');
       exitCode = await runIngest(subArgs, { provider: providerFlag });
+      break;
+    }
+    case 'ingest-transcript': {
+      const { runIngestTranscript } = await import('../src/cli/ingest-transcript.ts');
+      exitCode = await runIngestTranscript(subArgs, { provider: providerFlag });
       break;
     }
     case 'recall': {

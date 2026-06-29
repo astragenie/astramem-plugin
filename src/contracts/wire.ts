@@ -75,6 +75,33 @@ export const RecallResponseSchema = z.object({
 export type RecallResponse = z.infer<typeof RecallResponseSchema>;
 
 // ---------------------------------------------------------------------------
+// Transcript ingest (ingest-transcript subcommand — FEAT 4a §4.1.1)
+// ---------------------------------------------------------------------------
+
+export const TranscriptTurnSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string(),
+  ts: z.string().optional(), // ISO-8601 if present
+});
+
+export type TranscriptTurn = z.infer<typeof TranscriptTurnSchema>;
+
+export const TranscriptIngestPayloadSchema = z.object({
+  event: z.enum(['pre_compact', 'session_end', 'subagent_stop']),
+  session_id: z.string(),
+  project_id: z.string(),
+  agent_type: z.string().optional(),
+  cwd: z.string().optional(),
+  captured_at: z.string(), // ISO-8601
+  turns: z.array(TranscriptTurnSchema),
+  client_scrub_applied: z.boolean(),
+  client_scrub_hits: z.number().int().nonnegative(),
+  client_version: z.string(),
+});
+
+export type TranscriptIngestPayload = z.infer<typeof TranscriptIngestPayloadSchema>;
+
+// ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
 

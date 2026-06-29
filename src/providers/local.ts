@@ -25,6 +25,7 @@ import type {
   RecallRequest,
   RecallResponse,
   HealthResponse,
+  TranscriptIngestPayload,
 } from '../contracts/wire.ts';
 import { RecallResponseSchema, HealthResponseSchema } from '../contracts/wire.ts';
 import { DeterministicError, TransientError } from '../lib/errors.ts';
@@ -137,6 +138,43 @@ export class LocalProvider implements MemoryProvider {
         // Retry once on transient failure.
         try {
           await attemptIngest();
+        } catch {
+          // Silently absorb — ingest is fire-and-forget.
+        }
+        return;
+      }
+      // DeterministicError also absorbed for fire-and-forget.
+    }
+  }
+
+  /**
+   * Fire-and-forget transcript ingest (FEAT 4a §4.1.1 Option B).
+   * Posts a TranscriptIngestPayload to /ingest/transcript.
+   * Retries once on TransientError within the 2s budget.
+   * Never propagates errors — caller is insulated per fire-and-forget contract.
+   */
+  async ingestTranscript(payload: TranscriptIngestPayload): Promise<void> {
+    const attemptIngestTranscript = async (): Promise<void> => {
+      const headers = await buildHeaders();
+      const res = await fetchWithTimeout(
+        `${this.baseUrl}/ingest/transcript`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        },
+        2000,
+      );
+      await assertOk(res, 'ingest/transcript');
+    };
+
+    try {
+      await attemptIngestTranscript();
+    } catch (err: unknown) {
+      if (err instanceof TransientError) {
+        // Retry once on transient failure.
+        try {
+          await attemptIngestTranscript();
         } catch {
           // Silently absorb — ingest is fire-and-forget.
         }
