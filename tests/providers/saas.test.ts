@@ -106,22 +106,29 @@ describe('SaasProvider — Clerk auth file bearer', () => {
     await expect(provider.recall(SAMPLE_RECALL)).resolves.toBeDefined();
   });
 
-  it('makes request without Authorization when readAuth returns null (not logged in)', async () => {
-    // Temporarily override XDG so auth.json lookup returns null.
+  it('makes request without Authorization when readAuth returns null and no bearer env set (not logged in)', async () => {
+    // Temporarily override XDG so auth.json lookup returns null,
+    // AND clear bearer env vars so the env fallback path also yields nothing.
     const savedXdg = process.env['XDG_CONFIG_HOME'];
     const savedAppdata = process.env['APPDATA'];
+    const savedBearer = process.env['MEMORY_BEARER'];
+    const savedApiKey = process.env['ASTRAMEMORY_API_KEY'];
     process.env['XDG_CONFIG_HOME'] = '/tmp/no-such-auth-dir-saas-test-' + Date.now();
     delete process.env['APPDATA'];
+    delete process.env['MEMORY_BEARER'];
+    delete process.env['ASTRAMEMORY_API_KEY'];
 
     try {
       const provider = new SaasProvider('http://127.0.0.1:19998');
       await provider.recall(SAMPLE_RECALL);
-      // No Authorization header expected.
+      // No Authorization header expected — neither Clerk auth nor env bearer present.
       expect(capturedAuthHeader).toBeUndefined();
     } finally {
       if (savedXdg === undefined) delete process.env['XDG_CONFIG_HOME'];
       else process.env['XDG_CONFIG_HOME'] = savedXdg;
       if (savedAppdata !== undefined) process.env['APPDATA'] = savedAppdata;
+      if (savedBearer !== undefined) process.env['MEMORY_BEARER'] = savedBearer;
+      if (savedApiKey !== undefined) process.env['ASTRAMEMORY_API_KEY'] = savedApiKey;
     }
   });
 });

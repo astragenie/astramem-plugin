@@ -30,7 +30,9 @@ ARGS=(
 [ -n "$TRANSCRIPT_PATH" ] && ARGS+=(--transcript-path "$TRANSCRIPT_PATH")
 [ -n "$CWD" ] && ARGS+=(--cwd "$CWD")
 [ -n "$AGENT_TYPE" ] && ARGS+=(--agent-type "$AGENT_TYPE")
-ARGS+=(--max-turns "${MEMORY_SESSIONEND_MAX_TURNS:-20}")
-ARGS+=(--max-chars "${MEMORY_SESSIONEND_MAX_CHARS:-12000}")
+# Canonical wins; legacy alias MEMORY_SESSION_MAX_TURNS accepted as fallback
+# (deprecation warning fires on the JS side via resolveEnv when CLI is invoked).
+ARGS+=(--max-turns "${MEMORY_SESSIONEND_MAX_TURNS:-${MEMORY_SESSION_MAX_TURNS:-20}}")
+ARGS+=(--max-chars "${MEMORY_SESSIONEND_MAX_CHARS:-${MEMORY_SESSION_MAX_CHARS:-12000}}")
 
 exec bun "${CLAUDE_PLUGIN_ROOT}/bin/astramem" "${ARGS[@]}" >/dev/null 2>&1

@@ -30,6 +30,8 @@ import type {
 import { RecallResponseSchema, HealthResponseSchema } from '../contracts/wire.ts';
 import { DeterministicError, TransientError } from '../lib/errors.ts';
 import { readLocalBearer } from '../lib/secrets.ts';
+import { resolveEnv } from '../lib/env.ts';
+import { ENV } from '../lib/env-specs.ts';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -38,7 +40,7 @@ import { readLocalBearer } from '../lib/secrets.ts';
 const DEFAULT_LOCAL_URL = 'http://127.0.0.1:7777';
 
 function resolveBaseUrl(): string {
-  return process.env['MEMORY_API_URL_LOCAL'] ?? DEFAULT_LOCAL_URL;
+  return resolveEnv(ENV.apiUrlLocal).value ?? DEFAULT_LOCAL_URL;
 }
 
 // ---------------------------------------------------------------------------

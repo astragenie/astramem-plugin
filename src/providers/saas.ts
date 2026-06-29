@@ -27,14 +27,16 @@ import type {
 import { RecallResponseSchema, HealthResponseSchema } from '../contracts/wire.ts';
 import { DeterministicError, TransientError } from '../lib/errors.ts';
 import { readAuth } from '../../lib/clerkAuthFile.ts';
+import { resolveEnv } from '../lib/env.ts';
+import { ENV } from '../lib/env-specs.ts';
 
 // ---------------------------------------------------------------------------
 // Config helpers
 // ---------------------------------------------------------------------------
 
 function resolveBaseUrl(): string {
-  const fromEnv = process.env['MEMORY_API_URL_SAAS'];
-  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  const res = resolveEnv(ENV.apiUrlSaas);
+  if (res.value) return res.value.replace(/\/$/, '');
   throw new DeterministicError(
     'SaaS provider URL not configured. Set MEMORY_API_URL_SAAS env or config.saas.url.',
   );
@@ -64,10 +66,16 @@ async function fetchWithTimeout(
   }
 }
 
-/** Read Clerk Bearer from auth.json. Returns undefined if not logged in. */
+/**
+ * Read SaaS bearer.
+ * Precedence: Clerk auth.json (OIDC) → MEMORY_BEARER env → ASTRAMEMORY_API_KEY env.
+ * v0.7.0 will move OIDC refresh inside this function.
+ */
 async function readSaasBearer(): Promise<string | undefined> {
   const auth = await readAuth();
-  return auth?.access_token;
+  if (auth?.access_token) return auth.access_token;
+  // Static env fallback (see FEAT 4a §4.1.2 — OIDC refresh deferred to v0.7.0).
+  return resolveEnv(ENV.bearerSaas).value;
 }
 
 async function buildHeaders(bearerOverride?: string): Promise<Record<string, string>> {

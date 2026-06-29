@@ -11,6 +11,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { unifiedConfigDir } from './datadir.ts';
+import { resolveEnv } from './env.ts';
+import { ENV } from './env-specs.ts';
 
 const SECRETS_FILENAME = 'secrets.env';
 
@@ -31,8 +33,8 @@ export function readLocalBearer(): string | null {
     // File missing or unreadable — fall through.
   }
 
-  // 2. Try process env.
-  const envToken = process.env['MEMORY_BEARER'];
+  // 2. Try process env (canonical MEMORY_BEARER, alias ASTRAMEMORY_API_KEY).
+  const envToken = resolveEnv(ENV.bearerLocal).value;
   if (envToken && envToken.trim()) return envToken.trim();
 
   return null;

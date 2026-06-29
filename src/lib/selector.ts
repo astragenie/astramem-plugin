@@ -17,6 +17,8 @@ import type { SelectorResult } from '../contracts/selector.ts';
 import type { Provider } from '../contracts/selector.ts';
 import type { MemoryProvider } from '../contracts/provider.ts';
 import { loadConfig } from './config.ts';
+import { resolveEnv } from './env.ts';
+import { ENV } from './env-specs.ts';
 
 /** Options for resolveProvider. */
 export interface ResolvableOpts {
@@ -67,8 +69,8 @@ export async function resolveProvider(opts: ResolvableOpts = {}): Promise<Select
     return { provider, providerName: opts.flag, source: 'flag' };
   }
 
-  // 2. Env var — from caller or process.env.
-  const envVal = opts.env ?? process.env['ASTRAMEM_PROVIDER'];
+  // 2. Env var — from caller or process.env (via canonical env spec).
+  const envVal = opts.env ?? resolveEnv(ENV.provider).value;
   if (envVal && isValidProvider(envVal)) {
     const name = envVal as Provider;
     const provider = await loadProvider(name);
