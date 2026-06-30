@@ -114,7 +114,7 @@ Matches SaaS canonical at `C:\work\mega\memory\src\AstraMemory.Api\Models\Ingest
 
 File: `C:\work\mega\memory\src\AstraMemory.Api\Models\IngestTranscriptRequest.cs`
 
-Add 3 nullable fields (matching plugin Slice 3.5 additions):
+Add 3 fields (matching plugin Slice 3.5). **2 nullable, 1 REQUIRED:**
 
 ```csharp
 [property: JsonPropertyName("client_scrub_version")]
@@ -124,13 +124,21 @@ string? ClientScrubVersion,
 Dictionary<string, int>? ClientScrubHitsByLabel,
 
 [property: JsonPropertyName("wire_version")]
-string? WireVersion,
+[Required, RegularExpression("^v\\d+\\.\\d+$")]
+string WireVersion,
 ```
 
-Backward-compatible; old clients (no fields present) still accepted. These fields enable:
+`wire_version` REQUIRED per reviewer P0: nullable defeats its own daemon-divergence-prevention purpose. SaaS endpoint is new — zero v0 clients to break. Cost to require = zero. Cost to relax later = one DB migration. Pattern `^v\d+\.\d+$` (e.g. `v1.0`).
+
+`client_scrub_version` + `client_scrub_hits_by_label` stay nullable — old plugin builds in the wild won't send them; don't 400 them. Server-side divergence telemetry (`server_hits > client_hits`) needs the version field to correlate "which scrubber generation produced this number."
+
+These fields enable:
+- Wire-version dispatch (server refuses unknown versions deterministically)
 - Server-side scrubber version validation (advisory v0.7.0, enforced v0.8.0)
 - Telemetry: which client versions use which scrubbers
-- `wire_version` enforcement policy TBD (see §8)
+- Per-label re-scrub divergence alarms (defense-in-depth secret-redaction)
+
+Naming stays flat (no nested `scrub.*`) — consistency with existing flat fields (`client_scrub_applied`, `client_scrub_hits`, `client_version`).
 
 #### 4.2.2 SaaS OpenAPI publication
 
@@ -240,7 +248,16 @@ File: `C:\work\mega\astramemory-plugin\src\providers\saas.ts`
 - Review `src/lib/selector.ts` for any daemon-version-specific workarounds
 - If found, remove once daemon v0.2.0 ships
 
-### 4.3 Delivery order (strict)
+### 4.3 Successor FEATs (split for scope discipline)
+
+User review (2026-06-30) adopted full reviewer recommendations. Scope expansion split into successor FEATs to keep this one shippable:
+
+- **FEAT 4c — Agentic API extension** (`docs/superpowers/specs/2026-06-30-agentic-api-extension-4c.md`): 3 new SaaS endpoints (`POST /memories/hydrate`, `POST /memories/decision`, `PUT/GET /memories/continuation`); 4 new plugin provider methods (`hydrate`, `recent`, `related`, `narrative`); 3 new slash commands (`/astramem:hydrate`, `/astramem:decide`, `/astramem:continue`). Target v0.7.0.
+- **FEAT 4d — Route audience split** (`docs/superpowers/specs/2026-06-30-route-audience-split-4d.md`): split `MemoriesController` into `/agent/v1/*` (agent-facing) vs `/admin/v1/*` (UI/human-curation). Pre-empts 2-year auth/quota/rate-limit conflation. Target v0.8.0 or earlier per lead.
+
+This FEAT (4a) ships minimum: hooks done, wire-contract unified, plugin SaaS provider URL bugs fixed. No new agentic methods. No new SaaS endpoints.
+
+### 4.4 Delivery order (strict)
 
 1. SaaS DTO + OpenAPI + CI gate merge to `main`
 2. Daemon migration + dual-read merge to `main`
