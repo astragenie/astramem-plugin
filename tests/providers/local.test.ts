@@ -23,6 +23,7 @@ vi.mock('../../src/lib/datadir.ts', () => ({
 import { LocalProvider } from '../../src/providers/local.ts';
 import { runProviderContract, SAMPLE_INGEST, SAMPLE_RECALL } from './_contract.ts';
 import { DeterministicError, TransientError } from '../../src/lib/errors.ts';
+import { WIRE_VERSION } from '../../src/contracts/wire.ts';
 
 // ---------------------------------------------------------------------------
 // Contract suite — all shared contract checks run for LocalProvider
@@ -157,6 +158,62 @@ describe('LocalProvider — error classes and kind fields', () => {
     const err = await provider.health().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TransientError);
     expect((err as TransientError).kind).toBe('transient');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Minimal TranscriptIngestPayload fixture for wire_version tests.
+// Must satisfy TranscriptIngestPayloadSchema (all required fields present).
+// ---------------------------------------------------------------------------
+
+const SAMPLE_TRANSCRIPT_PAYLOAD = {
+  wire_version: WIRE_VERSION,
+  event: 'session_end' as const,
+  session_id: 'local-test-sess-1',
+  project_id: 'local-test-proj-1',
+  captured_at: '2026-06-30T00:00:00Z',
+  turns: [{ role: 'user' as const, text: 'hello from local provider test' }],
+  client_scrub_applied: true,
+  client_scrub_hits: 0,
+  client_version: '0.5.0',
+  client_scrub_version: '2',
+};
+
+describe('LocalProvider — ingestTranscript sends wire_version', () => {
+  let origFetch: typeof globalThis.fetch;
+  let capturedBody: unknown;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    capturedBody = undefined;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (init?.body) {
+        try {
+          capturedBody = JSON.parse(init.body as string);
+        } catch {
+          capturedBody = init.body;
+        }
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+    capturedBody = undefined;
+  });
+
+  it('ingestTranscript POSTs body that includes wire_version: "v1.0"', async () => {
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD);
+    expect(capturedBody).toBeDefined();
+    expect((capturedBody as Record<string, unknown>)['wire_version']).toBe(WIRE_VERSION);
+  });
+
+  it('ingestTranscript wire_version matches the exported WIRE_VERSION constant', async () => {
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD);
+    expect((capturedBody as Record<string, unknown>)['wire_version']).toBe('v1.0');
   });
 });
 

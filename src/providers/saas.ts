@@ -11,10 +11,10 @@
  *   - GET  /health             → handled by HealthController
  *   - GET  /version            → handled by HealthController
  *
- * WIRE BUGS (FEAT 4a wire-contract unification — pending fix):
+ * WIRE BUGS (FEAT 4a wire-contract unification — partially fixed):
  *   - recall() posts to /recall — SaaS has /memories/search
  *   - remember() posts to /remember — SaaS has /memories POST
- *   - Missing ingestTranscript() method — hooks via Bun CLI use LocalProvider only
+ *   - ingestTranscript() added (Phase 3 Stage 1) — sends wire_version per FEAT 4a
  *
  * Bearer is read from lib/clerkAuthFile.ts (already exists — Wave 1 migrated).
  * URL from config.saas.url or env MEMORY_API_URL_SAAS.
@@ -36,8 +36,9 @@ import type {
   RecallRequest,
   RecallResponse,
   HealthResponse,
+  TranscriptIngestPayload,
 } from '../contracts/wire.ts';
-import { RecallResponseSchema, HealthResponseSchema } from '../contracts/wire.ts';
+import { RecallResponseSchema, HealthResponseSchema, WIRE_VERSION } from '../contracts/wire.ts';
 import { DeterministicError, TransientError } from '../lib/errors.ts';
 import { readAuth } from '../../lib/clerkAuthFile.ts';
 import { resolveEnv } from '../lib/env.ts';
@@ -157,6 +158,53 @@ export class SaasProvider implements MemoryProvider {
         return;
       }
       // DeterministicError also absorbed for fire-and-forget ingest.
+    }
+  }
+
+  /**
+   * Fire-and-forget transcript ingest (FEAT 4a Phase 3 Stage 1).
+   * Posts a TranscriptIngestPayload (which must include wire_version) to
+   * /ingest/transcript. Retries once on TransientError. Never propagates —
+   * caller is insulated per fire-and-forget contract.
+   *
+   * NOTE: WIRE_VERSION is imported from contracts/wire.ts. Callers that build
+   * the payload themselves (e.g. ingest-transcript CLI) already set
+   * wire_version: WIRE_VERSION. The provider enforces no override here — it
+   * forwards the payload as-is (Zod validates at the CLI build site).
+   */
+  async ingestTranscript(payload: TranscriptIngestPayload): Promise<void> {
+    // Guarantee the field is present even if a caller forgot to set it
+    // (defensive — schema validation at the CLI layer is the primary gate).
+    const body: TranscriptIngestPayload = {
+      ...payload,
+      wire_version: payload.wire_version ?? WIRE_VERSION,
+    };
+    const attemptIngestTranscript = async (): Promise<void> => {
+      const headers = await buildHeaders();
+      const res = await fetchWithTimeout(
+        `${this.baseUrl}/ingest/transcript`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        },
+        2000,
+      );
+      await assertOk(res, 'ingest/transcript');
+    };
+
+    try {
+      await attemptIngestTranscript();
+    } catch (err: unknown) {
+      if (err instanceof TransientError) {
+        try {
+          await attemptIngestTranscript();
+        } catch {
+          // Silently absorb — ingest is fire-and-forget.
+        }
+        return;
+      }
+      // DeterministicError also absorbed for fire-and-forget.
     }
   }
 

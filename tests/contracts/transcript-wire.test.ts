@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
   TranscriptTurnSchema,
   TranscriptIngestPayloadSchema,
+  WIRE_VERSION,
 } from '../../src/contracts/wire.ts';
 
 // ---------------------------------------------------------------------------
@@ -16,6 +17,7 @@ const VALID_TURN_USER = { role: 'user', text: 'Hello from user' };
 const VALID_TURN_ASSISTANT = { role: 'assistant', text: 'Hello from assistant', ts: '2026-01-01T00:00:00Z' };
 
 const VALID_ENVELOPE = {
+  wire_version: WIRE_VERSION,
   event: 'pre_compact',
   session_id: 'sess-abc',
   project_id: 'proj-xyz',
@@ -210,5 +212,37 @@ describe('TranscriptIngestPayloadSchema', () => {
     const withoutTs = { ...VALID_ENVELOPE, turns: [{ role: 'user', text: 'hi' }] };
     expect(TranscriptIngestPayloadSchema.safeParse(withTs).success).toBe(true);
     expect(TranscriptIngestPayloadSchema.safeParse(withoutTs).success).toBe(true);
+  });
+
+  // ------------------------------------------------------------------
+  // wire_version — required, pattern ^v\d+\.\d+$
+  // ------------------------------------------------------------------
+
+  it('wire_version is present and equals WIRE_VERSION in VALID_ENVELOPE', () => {
+    const r = TranscriptIngestPayloadSchema.safeParse(VALID_ENVELOPE);
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.wire_version).toBe(WIRE_VERSION);
+  });
+
+  it('rejects missing wire_version', () => {
+    const { wire_version: _w, ...rest } = VALID_ENVELOPE;
+    const r = TranscriptIngestPayloadSchema.safeParse(rest);
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects wire_version with wrong pattern (no v prefix)', () => {
+    const r = TranscriptIngestPayloadSchema.safeParse({ ...VALID_ENVELOPE, wire_version: '1.0' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects wire_version with wrong pattern (free text)', () => {
+    const r = TranscriptIngestPayloadSchema.safeParse({ ...VALID_ENVELOPE, wire_version: 'latest' });
+    expect(r.success).toBe(false);
+  });
+
+  it('accepts any valid semver-style wire_version (future version)', () => {
+    const r = TranscriptIngestPayloadSchema.safeParse({ ...VALID_ENVELOPE, wire_version: 'v2.0' });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.wire_version).toBe('v2.0');
   });
 });
