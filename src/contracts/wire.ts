@@ -102,8 +102,11 @@ export type TranscriptTurn = z.infer<typeof TranscriptTurnSchema>;
 // accidental PII leakage through unrecognised keys, and forces consumers to
 // add new optional fields rather than forwarding arbitrary objects.
 export const TranscriptIngestPayloadSchema = z.object({
-  /** Wire format version — must equal WIRE_VERSION. Pattern: /^v\d+\.\d+$/ */
-  wire_version: z.string().regex(/^v\d+\.\d+$/),
+  /** Wire format version — must equal WIRE_VERSION. Pattern: ASCII digits only, no
+   * leading zeros. Matches SaaS .NET DTO regex authoritatively (see memory
+   * IngestTranscriptRequest.cs M-R7). \d would match Unicode-category-Decimal
+   * (e.g. Arabic-Indic ١) — undesirable for a wire dispatch field. */
+  wire_version: z.string().regex(/^v(?:0|[1-9][0-9]*)\.[0-9]+$/),
   event: z.enum(['pre_compact', 'session_end', 'subagent_stop']),
   session_id: z.string(),
   project_id: z.string(),
