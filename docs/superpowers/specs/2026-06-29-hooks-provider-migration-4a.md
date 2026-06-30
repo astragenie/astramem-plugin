@@ -391,3 +391,43 @@ No rollback gate. Legacy bash hook scripts (`_load-env.sh`, `_ingest-transcript.
 ## 11. Drive-bys (do alongside implementation)
 
 - Plugin `bin/astramem:91` version string `0.4.0` → match tag (handled in Slice 6 finalization)
+
+## 12. Follow-ups / Backlog (from review)
+
+Items surfaced during FEAT-4a Phase 3 code review (2026-06-30). None are blockers for v0.5.0 but should be tracked for future sprints.
+
+### v0.4.1 Backport (regression from v0.4.0)
+
+**Backlog item**: Cut a v0.4.1 patch release carrying only commit `06d20a8`'s `ingestTranscript()` addition for sites that cannot upgrade past v0.4.x.
+
+Scope of backport: the single method addition from `06d20a8` only (no schema or constant changes, since the original v0.4.0 did not have `TranscriptIngestPayloadSchema` or `WIRE_VERSION`). The backport should add a minimal stub method that posts to `/ingest/transcript` and fire-and-forgets errors, matching the original v0.4.x SaaS provider shape.
+
+See CHANGELOG `[0.5.0] Regression Disclosure` section for full impact statement.
+
+### M1 — Mechanical version-sync gate with SaaS PR #530
+
+Today the gate is purely social (CHANGELOG prose). Proposal: at plugin startup or ingest first-call, probe `/version` on the saas URL, confirm `wire_versions_supported` includes `'v1.0'`. If not, log a clear warning + disable saas branch. This prevents silent incompatibility when the SaaS server is upgraded to an incompatible wire version.
+
+### M2 — CI Bun matrix floor pin
+
+Current CI matrix uses `[latest]` only. Proposal: re-add `[1.1.30, latest]` matrix to detect Bun-breaking changes early; bisect on floor if a new Bun version breaks the suite.
+
+### M3 — Selector auto-probe stampede on cold start
+
+Concurrent ingest calls fire N parallel `/health` probes when the cache is cold. Fix: in-flight Promise dedup map — if a probe for a given URL is already in-flight, return the same Promise rather than issuing a new HTTP request.
+
+### M4 — 5s probe timeout vs 2s CLI fire-and-forget budget on Windows
+
+The health probe timeout is 5s; the CLI fire-and-forget budget is 2s. On Windows, if the probe times out, the auto-routing falls through to SaaS — effectively breaking local auto-routing for the 2s callers. Proposal: separate "fast probe" (300ms) for hot-path callers vs "deep probe" for `astramem doctor`.
+
+### M5 — Doctor deprecation counters are per-process ephemeral
+
+`astramem doctor` spawns a fresh process → hit counts are always 0. Proposal: append deprecation events to a sidecar `~/.config/astramem/deprecations.jsonl` for durability across process restarts. This makes `astramem doctor` useful for long-running operators.
+
+### M6 — wire_version emission asymmetry
+
+`saas.ts:ingestTranscript()` backfills `payload.wire_version ?? WIRE_VERSION`; `local.ts` does not have the same defensive backfill. Proposal: enforce at schema layer (`z.literal(WIRE_VERSION)`) OR centralize the backfill in a shared payload-builder utility function used by both providers.
+
+### M7 — Slice 6 conflated contract bug-fix with finalize work
+
+Commit `06d20a8` bundled the `ingestTranscript()` addition (a contract bug-fix) with finalize work. Future contract regressions should ship as standalone patches for cleaner cherry-pick and backport. This is a process recommendation, not a code change.

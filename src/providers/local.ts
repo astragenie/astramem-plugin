@@ -32,6 +32,7 @@ import { DeterministicError, TransientError } from '../lib/errors.ts';
 import { readLocalBearer } from '../lib/secrets.ts';
 import { resolveEnv } from '../lib/env.ts';
 import { ENV } from '../lib/env-specs.ts';
+import { scrubWithLabels } from '../lib/scrub.ts';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -152,10 +153,35 @@ export class LocalProvider implements MemoryProvider {
   /**
    * Fire-and-forget transcript ingest (FEAT 4a §4.1.1 Option B).
    * Posts a TranscriptIngestPayload to /ingest/transcript.
+   * Applies a scrub pass on turn text before POSTing (defense-in-depth: protects
+   * programmatic callers that bypass the CLI scrub layer). If the payload already
+   * carries client_scrub_applied=true, the scrub is still applied — scrubWithLabels
+   * is idempotent (second pass on an already-redacted string is a no-op).
    * Retries once on TransientError within the 2s budget.
    * Never propagates errors — caller is insulated per fire-and-forget contract.
    */
   async ingestTranscript(payload: TranscriptIngestPayload): Promise<void> {
+    // Defense-in-depth scrub: run scrubWithLabels on each turn's text before
+    // sending to the wire. CLI callers already scrubbed (idempotent). Programmatic
+    // callers (MCP, SDK) that skipped the CLI layer get scrub here.
+    let totalHits = payload.client_scrub_hits;
+    const mergedHitsByLabel: Record<string, number> = { ...(payload.client_scrub_hits_by_label ?? {}) };
+    const scrubbedTurns = payload.turns.map((turn) => {
+      const { output, hitsByLabel } = scrubWithLabels(turn.text);
+      for (const [label, count] of Object.entries(hitsByLabel)) {
+        mergedHitsByLabel[label] = (mergedHitsByLabel[label] ?? 0) + count;
+        totalHits += count;
+      }
+      return { ...turn, text: output };
+    });
+    const scrubbedPayload: TranscriptIngestPayload = {
+      ...payload,
+      turns: scrubbedTurns,
+      client_scrub_applied: true,
+      client_scrub_hits: totalHits,
+      client_scrub_hits_by_label: mergedHitsByLabel,
+    };
+
     const attemptIngestTranscript = async (): Promise<void> => {
       const headers = await buildHeaders();
       const res = await fetchWithTimeout(
@@ -163,7 +189,7 @@ export class LocalProvider implements MemoryProvider {
         {
           method: 'POST',
           headers,
-          body: JSON.stringify(payload),
+          body: JSON.stringify(scrubbedPayload),
         },
         2000,
       );

@@ -217,6 +217,69 @@ describe('LocalProvider — ingestTranscript sends wire_version', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// P-B3: defense-in-depth scrub inside ingestTranscript().
+// ---------------------------------------------------------------------------
+
+describe('LocalProvider — provider-layer scrub (P-B3)', () => {
+  let origFetch: typeof globalThis.fetch;
+  let capturedBody: Record<string, unknown> | undefined;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    capturedBody = undefined;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (init?.body) {
+        try { capturedBody = JSON.parse(init.body as string) as Record<string, unknown>; }
+        catch { /* ignore */ }
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+    capturedBody = undefined;
+  });
+
+  it('(a) raw bearer in turn text is redacted by provider when payload has not been scrubbed', async () => {
+    // Simulate a programmatic caller that sets client_scrub_applied=false + raw secret in text.
+    const rawBearer = 'Bearer ' + 'a'.repeat(32) + 'b'.repeat(32);
+    const payload = {
+      ...SAMPLE_TRANSCRIPT_PAYLOAD,
+      client_scrub_applied: false,
+      client_scrub_hits: 0,
+      client_scrub_hits_by_label: {},
+      turns: [{ role: 'user' as const, text: rawBearer }],
+    };
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.ingestTranscript(payload);
+
+    expect(capturedBody).toBeDefined();
+    const postedBody = capturedBody as { turns?: { text: string }[]; client_scrub_hits?: number };
+    expect(postedBody.turns?.[0]?.text).not.toContain('a'.repeat(32) + 'b'.repeat(32));
+    expect(postedBody.turns?.[0]?.text).toBe('[REDACTED:bearer]');
+    expect(postedBody.client_scrub_hits).toBeGreaterThan(0);
+  });
+
+  it('(b) already-scrubbed payload passes through unchanged — scrubWithLabels is idempotent', async () => {
+    // Text already contains the redaction marker — second pass is a no-op.
+    const payload = {
+      ...SAMPLE_TRANSCRIPT_PAYLOAD,
+      turns: [{ role: 'user' as const, text: '[REDACTED:bearer]' }],
+      client_scrub_applied: true,
+      client_scrub_hits: 1,
+      client_scrub_hits_by_label: { bearer: 1 },
+    };
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.ingestTranscript(payload);
+
+    expect(capturedBody).toBeDefined();
+    const postedBody = capturedBody as { turns?: { text: string }[] };
+    expect(postedBody.turns?.[0]?.text).toBe('[REDACTED:bearer]');
+  });
+});
+
 describe('LocalProvider — bearer not logged on error paths', () => {
   let origFetch: typeof globalThis.fetch;
   let capturedMessages: string[] = [];

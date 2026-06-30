@@ -98,6 +98,9 @@ export type TranscriptTurn = z.infer<typeof TranscriptTurnSchema>;
 // Plus Slice 3.5 additions (client_scrub_version, client_scrub_hits_by_label, wire_version).
 // wire_version is REQUIRED (Phase 3 Stage 1 — FEAT 4a) — server uses it for
 // daemon-divergence detection; nullable would defeat that purpose.
+// .strict() rejects unknown fields — callers must map explicitly; prevents
+// accidental PII leakage through unrecognised keys, and forces consumers to
+// add new optional fields rather than forwarding arbitrary objects.
 export const TranscriptIngestPayloadSchema = z.object({
   /** Wire format version — must equal WIRE_VERSION. Pattern: /^v\d+\.\d+$/ */
   wire_version: z.string().regex(/^v\d+\.\d+$/),
@@ -117,7 +120,7 @@ export const TranscriptIngestPayloadSchema = z.object({
   client_scrub_version: z.string(),
   /** Per-label hit counts from scrubWithLabels() across all turns. */
   client_scrub_hits_by_label: z.record(z.string(), z.number().int().nonnegative()).optional(),
-});
+}).strict();
 
 export type TranscriptIngestPayload = z.infer<typeof TranscriptIngestPayloadSchema>;
 

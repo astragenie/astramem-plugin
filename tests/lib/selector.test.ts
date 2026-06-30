@@ -20,6 +20,7 @@ vi.mock('../../src/lib/datadir.ts', () => ({
 // ---------------------------------------------------------------------------
 const makeMockProvider = (): MemoryProvider => ({
   ingest: vi.fn().mockResolvedValue(undefined),
+  ingestTranscript: vi.fn().mockResolvedValue(undefined),
   recall: vi.fn().mockResolvedValue({ hits: [] }),
   remember: vi.fn().mockResolvedValue(undefined),
   health: vi.fn().mockResolvedValue({ ok: true }),
@@ -28,11 +29,11 @@ const makeMockProvider = (): MemoryProvider => ({
 // Mock the Track A provider files so they don't need to exist yet.
 vi.mock('../../src/providers/local.ts', () => {
   const inst = makeMockProvider();
-  return { LocalProvider: class { ingest = inst.ingest; recall = inst.recall; remember = inst.remember; health = inst.health; } };
+  return { LocalProvider: class { ingest = inst.ingest; ingestTranscript = inst.ingestTranscript; recall = inst.recall; remember = inst.remember; health = inst.health; } };
 });
 vi.mock('../../src/providers/saas.ts', () => {
   const inst = makeMockProvider();
-  return { SaasProvider: class { ingest = inst.ingest; recall = inst.recall; remember = inst.remember; health = inst.health; } };
+  return { SaasProvider: class { ingest = inst.ingest; ingestTranscript = inst.ingestTranscript; recall = inst.recall; remember = inst.remember; health = inst.health; } };
 });
 
 beforeEach(() => {

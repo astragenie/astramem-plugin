@@ -43,6 +43,7 @@ import { DeterministicError, TransientError } from '../lib/errors.ts';
 import { readAuth } from '../../lib/clerkAuthFile.ts';
 import { resolveEnv } from '../lib/env.ts';
 import { ENV } from '../lib/env-specs.ts';
+import { scrubWithLabels } from '../lib/scrub.ts';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -167,17 +168,37 @@ export class SaasProvider implements MemoryProvider {
    * /ingest/transcript. Retries once on TransientError. Never propagates —
    * caller is insulated per fire-and-forget contract.
    *
+   * Defense-in-depth: applies a scrub pass on turn text before POSTing so that
+   * programmatic callers (MCP, SDK) that bypass the CLI scrub layer are still
+   * protected. CLI callers already scrubbed — scrubWithLabels is idempotent.
+   *
    * NOTE: WIRE_VERSION is imported from contracts/wire.ts. Callers that build
    * the payload themselves (e.g. ingest-transcript CLI) already set
-   * wire_version: WIRE_VERSION. The provider enforces no override here — it
-   * forwards the payload as-is (Zod validates at the CLI build site).
+   * wire_version: WIRE_VERSION. The provider backfills defensively.
    */
   async ingestTranscript(payload: TranscriptIngestPayload): Promise<void> {
-    // Guarantee the field is present even if a caller forgot to set it
+    // Defense-in-depth scrub: run scrubWithLabels on each turn's text before
+    // sending to the wire. CLI callers already scrubbed (idempotent). Programmatic
+    // callers (MCP, SDK) that skipped the CLI layer get scrub here.
+    let totalHits = payload.client_scrub_hits;
+    const mergedHitsByLabel: Record<string, number> = { ...(payload.client_scrub_hits_by_label ?? {}) };
+    const scrubbedTurns = payload.turns.map((turn) => {
+      const { output, hitsByLabel } = scrubWithLabels(turn.text);
+      for (const [label, count] of Object.entries(hitsByLabel)) {
+        mergedHitsByLabel[label] = (mergedHitsByLabel[label] ?? 0) + count;
+        totalHits += count;
+      }
+      return { ...turn, text: output };
+    });
+    // Guarantee wire_version is present even if a caller forgot to set it
     // (defensive — schema validation at the CLI layer is the primary gate).
     const body: TranscriptIngestPayload = {
       ...payload,
       wire_version: payload.wire_version ?? WIRE_VERSION,
+      turns: scrubbedTurns,
+      client_scrub_applied: true,
+      client_scrub_hits: totalHits,
+      client_scrub_hits_by_label: mergedHitsByLabel,
     };
     const attemptIngestTranscript = async (): Promise<void> => {
       const headers = await buildHeaders();

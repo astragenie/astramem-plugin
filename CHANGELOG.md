@@ -4,6 +4,14 @@
 
 Closes out FEAT-4a Phase 3 (plugin wire-contract unification, Path 3a-saas). Daemon `astramemory-local` v0.2.0 ships in lockstep; SaaS backend `memory` PR #530 lands the canonical envelope.
 
+### Regression Disclosure (v0.4.0)
+
+v0.4.0 (released 2026-06-27) shipped with `saas.ts.ingestTranscript()` entirely missing. Any user with `provider: saas` (flag/env/config) lost every transcript ingest silently to a `TypeError` swallowed by the CLI's fire-and-forget catch path.
+
+Affected versions: v0.4.0 only. Earlier versions did not have a separable SaaS provider.
+
+Workaround: pin v0.5.0 or later. Backport to v0.4.x is recommended for sites that cannot upgrade past 0.4.x — track in backlog.
+
 ### Added
 - **`wire_version` field on `TranscriptIngestPayloadSchema`** (required, regex `^v\d+\.\d+$`); `WIRE_VERSION = 'v1.0'` constant exported from `src/contracts/wire.ts`
 - **Both providers emit `wire_version: "v1.0"`** on every ingest call:
