@@ -5,7 +5,8 @@
 ![license](https://img.shields.io/github/license/astragenie/astramem-plugin)
 
 Claude Code plugin bridging the `astramem` CLI, provider selector, and auto-capture hooks to
-AstraMemory — local or cloud.
+AstraMemory — local or cloud. **v0.5.0:** Plugin now speaks the canonical `wire_version: v1.0` 
+shape to both SaaS and local backends, closing out the wire-contract unification (FEAT-4a Phase 3).
 
 ---
 
@@ -53,7 +54,7 @@ If the provider is unreachable they suggest `astramem health` for diagnosis.
 | `remember` | Store a new typed memory item. |
 | `health` | Probe configured provider(s). JSON output `{ ok, provider, url, latencyMs }`. |
 | `config` | Read/write config file via dot-path keys (`config get`, `config set`, `config unset`). |
-| `doctor` | Print env vars, last 5 log lines, selector resolution, config validation. |
+| `doctor` | Print env vars, last 5 log lines, selector resolution, config validation, and per-alias env-deprecation hit counts. |
 | `connect` | Pair this workstation to a provider (local daemon or SaaS dashboard code). |
 
 Full flag reference: `astramem --help` or `astramem <subcommand> --help`.
@@ -69,6 +70,9 @@ The selector resolves which provider handles each call. Resolution order (highes
 3. `provider` field in `~/.config/astramem/config.json` (or `%APPDATA%\Astramem\config.json`).
 4. `auto` default: probe local (`http://127.0.0.1:7777/health`) with a 5-second cached result;
    fall back to SaaS if local is not reachable.
+
+The selector implements auto-probe with automatic fallback, routing calls transparently between
+local and SaaS backends. See `src/lib/selector.ts` for the implementation.
 
 The selector source is reported in `astramem doctor` output and in structured log lines emitted
 at each dispatch.
@@ -132,19 +136,23 @@ scrubbed prior to write.
 
 ## Environment variables
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ASTRAMEM_PROVIDER` | (none) | Override provider selection (`local`, `saas`, `auto`). |
-| `MEMORY_BEARER` | (resolved via `astramem connect`) | Bearer token for MCP transport (`.mcp.json`). |
-| `MEMORY_API_URL` | `http://localhost:5201` | Legacy API base URL for hook scripts. |
-| `MEMORY_MCP_URL` | `http://localhost:5202` | MCP server URL read by `.mcp.json`. |
-| `MEMORY_INGEST_RETRIES` | `2` | POST attempt budget per hook fire. |
-| `MEMORY_INGEST_RETRY_SLEEP` | `1` | Seconds between hook retry attempts. |
-| `MEMORY_PRECOMPACT_MAX_TURNS` | `20` | Turns captured by PreCompact hook. |
-| `MEMORY_SESSION_MAX_TURNS` | `40` | Turns captured by SessionEnd hook. |
-| `MEMORY_SUBAGENT_MAX_TURNS` | `12` | Turns captured by SubagentStop hook. |
-| `ASTRAMEMORY_ENV` | `prod` | Active profile name for `~/.astramemory/` legacy lookup. |
-| `ASTRAMEMORY_HOOK_DEBUG` | `0` | Set `1` to emit one debug line per hook fire to stderr. |
+Canonical env names (v0.5.0+) with legacy aliases:
+
+| Canonical | Legacy aliases | Default | Purpose |
+| --- | --- | --- | --- |
+| `ASTRAMEM_PROVIDER` | `MEMORY_PROVIDER` | (none) | Override provider selection (`local`, `saas`, `auto`). |
+| `MEMORY_BEARER` | (none) | (resolved via `astramem connect`) | Bearer token for MCP transport (`.mcp.json`). |
+| `MEMORY_API_URL` | `ASTRAMEMORY_API_URL` | `http://localhost:5201` | API base URL for hook scripts. |
+| `MEMORY_MCP_URL` | (none) | `http://localhost:5202` | MCP server URL read by `.mcp.json`. |
+| `MEMORY_INGEST_RETRIES` | (none) | `2` | POST attempt budget per hook fire. |
+| `MEMORY_INGEST_RETRY_SLEEP` | (none) | `1` | Seconds between hook retry attempts. |
+| `MEMORY_PRECOMPACT_MAX_TURNS` | (none) | `20` | Turns captured by PreCompact hook. |
+| `MEMORY_SESSION_MAX_TURNS` | (none) | `40` | Turns captured by SessionEnd hook. |
+| `MEMORY_SUBAGENT_MAX_TURNS` | (none) | `12` | Turns captured by SubagentStop hook. |
+| `ASTRAMEMORY_ENV` | (none) | `prod` | Active profile name for `~/.astramemory/` legacy lookup. |
+| `ASTRAMEMORY_HOOK_DEBUG` | (none) | `0` | Set `1` to emit one debug line per hook fire to stderr. |
+
+For the complete list of canonical names and resolution order, see the environment specification file.
 
 ---
 
@@ -207,8 +215,11 @@ astramem remember --content "We chose Bun over Node for the plugin runtime" --ty
 # Check provider health
 astramem health
 
-# Diagnose config + env
+# Diagnose config + env (includes deprecation-hit counts)
 astramem doctor
+
+# Same as above, but JSON output with deprecation_hits array
+astramem doctor --json
 
 # Get / set config values
 astramem config get
@@ -220,6 +231,17 @@ astramem connect
 
 # Pair workstation (dashboard claim code)
 astramem connect ABCD-1234 --env prod
+```
+
+Example `astramem doctor --json` output (partial):
+```json
+{
+  "env_vars": { "ASTRAMEM_PROVIDER": "auto", "MEMORY_BEARER": "..." },
+  "deprecation_hits": [
+    { "canonical": "ASTRAMEM_PROVIDER", "alias": "MEMORY_PROVIDER", "hits": 3 },
+    { "canonical": "MEMORY_API_URL", "alias": "ASTRAMEMORY_API_URL", "hits": 1 }
+  ]
+}
 ```
 
 ---

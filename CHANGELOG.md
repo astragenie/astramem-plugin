@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.5.0] — 2026-06-30
+
+Closes out FEAT-4a Phase 3 (plugin wire-contract unification, Path 3a-saas). Daemon `astramemory-local` v0.2.0 ships in lockstep; SaaS backend `memory` PR #530 lands the canonical envelope.
+
+### Regression Disclosure (v0.4.0)
+
+v0.4.0 (released 2026-06-27) shipped with `saas.ts.ingestTranscript()` entirely missing. Any user with `provider: saas` (flag/env/config) lost every transcript ingest silently to a `TypeError` swallowed by the CLI's fire-and-forget catch path.
+
+Affected versions: v0.4.0 only. Earlier versions did not have a separable SaaS provider.
+
+Workaround: pin v0.5.0 or later. Backport to v0.4.x is recommended for sites that cannot upgrade past 0.4.x — track in backlog.
+
+### Added
+- **`wire_version` field on `TranscriptIngestPayloadSchema`** (required, regex `^v\d+\.\d+$`); `WIRE_VERSION = 'v1.0'` constant exported from `src/contracts/wire.ts`
+- **Both providers emit `wire_version: "v1.0"`** on every ingest call:
+  - `src/providers/local.ts`: wire_version filled in envelope at ingest site
+  - `src/providers/saas.ts`: ingestTranscript() method added (was completely absent); fire-and-forget semantics; defensive wire_version fill from WIRE_VERSION constant
+- **`astramem doctor` now surfaces per-alias env-deprecation hit counts** in both text and `--json` modes (new `deprecation_hits` field in JSON output listing canonical env name, deprecated alias, and hit count; sorted descending)
+- **E2E test `tests/e2e/wire-flow.test.ts`** exercising selector + both providers against fake servers (9 cases):
+  - auto-resolve to local, fallback to saas, flag override, env override
+  - wire_version on every payload
+  - bearer scrub gate (token never appears in posted JSON or stderr)
+- **Cross-OS CI matrix `.github/workflows/test.yml`**: ubuntu-latest + macos-latest + windows-latest × bun latest; fail-fast off; concurrency cancel on non-main branches
+
+### Changed
+- **`TranscriptIngestPayloadSchema` now requires `wire_version`** (was missing). Plugin builds older than 0.5.0 that talked to the SaaS canonical endpoint would have been rejected; this aligns the plugin emission to match the SaaS requirement.
+
+### Tests / CI
+- 12 new assertions in `tests/contracts/transcript-wire.test.ts`, `tests/providers/local.test.ts`, `tests/providers/saas.test.ts`
+- 3 new tests in `tests/cli/doctor.test.ts` for deprecation-hit surface
+- 9 E2E cases in `tests/e2e/wire-flow.test.ts`
+- All 7 hook golden fixtures updated to include `wire_version: "v1.0"`
+- Local Windows run: 380 pass / 18 skipped / 0 fail
+
+### Coordination
+- Lands together with `astramemory-local` v0.2.0 + `memory` PR #530 (SaaS canonical envelope)
+- Marketplace bump per [feedback_marketplace_bump](https://github.com/astragenie/feedback/blob/main/feedback_marketplace_bump.md): bump `astra-marketplace.version` same push as the plugin tag
+
+### Commits
+- `06d20a8` — wire_version emission on both providers + WIRE_VERSION constant + schema update
+- `4db957f` — `astramem doctor` surfaces env-deprecation hit counts
+- `5fb99e6` — E2E `tests/e2e/wire-flow.test.ts` (9 cases: auto-resolve, fallback, flag/env override, wire_version on every payload, bearer scrub)
+- `2345a5d` — cross-OS CI matrix (ubuntu/macos/windows × bun latest)
+
+### References
+- Spec: [docs/superpowers/specs/2026-06-29-hooks-provider-migration-4a.md](docs/superpowers/specs/2026-06-29-hooks-provider-migration-4a.md)
+
 ## 0.5.0 — 2026-06-28
 
 ### Changed

@@ -1,4 +1,5 @@
 {
+  "wire_version": "v1.0",
   "event": "pre_compact",
   "session_id": "aabbccdd-1111-2222-3333-000000000003",
   "project_id": "secret-project",

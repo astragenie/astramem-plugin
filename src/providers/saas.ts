@@ -11,10 +11,10 @@
  *   - GET  /health             → handled by HealthController
  *   - GET  /version            → handled by HealthController
  *
- * WIRE BUGS (FEAT 4a wire-contract unification — pending fix):
+ * WIRE BUGS (FEAT 4a wire-contract unification — partially fixed):
  *   - recall() posts to /recall — SaaS has /memories/search
  *   - remember() posts to /remember — SaaS has /memories POST
- *   - Missing ingestTranscript() method — hooks via Bun CLI use LocalProvider only
+ *   - ingestTranscript() added (Phase 3 Stage 1) — sends wire_version per FEAT 4a
  *
  * Bearer is read from lib/clerkAuthFile.ts (already exists — Wave 1 migrated).
  * URL from config.saas.url or env MEMORY_API_URL_SAAS.
@@ -36,12 +36,14 @@ import type {
   RecallRequest,
   RecallResponse,
   HealthResponse,
+  TranscriptIngestPayload,
 } from '../contracts/wire.ts';
-import { RecallResponseSchema, HealthResponseSchema } from '../contracts/wire.ts';
+import { RecallResponseSchema, HealthResponseSchema, WIRE_VERSION } from '../contracts/wire.ts';
 import { DeterministicError, TransientError } from '../lib/errors.ts';
 import { readAuth } from '../../lib/clerkAuthFile.ts';
 import { resolveEnv } from '../lib/env.ts';
 import { ENV } from '../lib/env-specs.ts';
+import { scrubWithLabels } from '../lib/scrub.ts';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -157,6 +159,75 @@ export class SaasProvider implements MemoryProvider {
         return;
       }
       // DeterministicError also absorbed for fire-and-forget ingest.
+    }
+  }
+
+  /**
+   * Fire-and-forget transcript ingest (FEAT 4a Phase 3 Stage 1).
+   * Posts a TranscriptIngestPayload (which must include wire_version) to
+   * /ingest/transcript. Retries once on TransientError. Never propagates —
+   * caller is insulated per fire-and-forget contract.
+   *
+   * Defense-in-depth: applies a scrub pass on turn text before POSTing so that
+   * programmatic callers (MCP, SDK) that bypass the CLI scrub layer are still
+   * protected. CLI callers already scrubbed — scrubWithLabels is idempotent.
+   *
+   * NOTE: WIRE_VERSION is imported from contracts/wire.ts. Callers that build
+   * the payload themselves (e.g. ingest-transcript CLI) already set
+   * wire_version: WIRE_VERSION. The provider backfills defensively.
+   */
+  async ingestTranscript(payload: TranscriptIngestPayload): Promise<void> {
+    // Defense-in-depth scrub: run scrubWithLabels on each turn's text before
+    // sending to the wire. CLI callers already scrubbed (idempotent). Programmatic
+    // callers (MCP, SDK) that skipped the CLI layer get scrub here.
+    let totalHits = payload.client_scrub_hits;
+    const mergedHitsByLabel: Record<string, number> = { ...(payload.client_scrub_hits_by_label ?? {}) };
+    const scrubbedTurns = payload.turns.map((turn) => {
+      const { output, hitsByLabel } = scrubWithLabels(turn.text);
+      for (const [label, count] of Object.entries(hitsByLabel)) {
+        mergedHitsByLabel[label] = (mergedHitsByLabel[label] ?? 0) + count;
+        // Trust caller's prior counts; this layer ADDS scrubber output for any text the
+        // caller missed. Sum may exceed actual redactions if caller mis-counted upstream.
+        totalHits += count;
+      }
+      return { ...turn, text: output };
+    });
+    // Guarantee wire_version is present even if a caller forgot to set it
+    // (defensive — schema validation at the CLI layer is the primary gate).
+    const body: TranscriptIngestPayload = {
+      ...payload,
+      wire_version: payload.wire_version ?? WIRE_VERSION,
+      turns: scrubbedTurns,
+      client_scrub_applied: true,
+      client_scrub_hits: totalHits,
+      client_scrub_hits_by_label: mergedHitsByLabel,
+    };
+    const attemptIngestTranscript = async (): Promise<void> => {
+      const headers = await buildHeaders();
+      const res = await fetchWithTimeout(
+        `${this.baseUrl}/ingest/transcript`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        },
+        2000,
+      );
+      await assertOk(res, 'ingest/transcript');
+    };
+
+    try {
+      await attemptIngestTranscript();
+    } catch (err: unknown) {
+      if (err instanceof TransientError) {
+        try {
+          await attemptIngestTranscript();
+        } catch {
+          // Silently absorb — ingest is fire-and-forget.
+        }
+        return;
+      }
+      // DeterministicError also absorbed for fire-and-forget.
     }
   }
 

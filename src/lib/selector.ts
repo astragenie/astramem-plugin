@@ -39,18 +39,30 @@ interface CacheEntry {
 
 const _healthCache = new Map<string, CacheEntry>();
 
-/** Exposed for test injection — override to skip real HTTP probes. */
-export let _healthProbeFn: (url: string) => Promise<{ ok: boolean; latency_ms: number }> =
+/**
+ * Internal probe function — module-private; replaced only via _setHealthProbeFn in test env.
+ * Not exported directly to prevent production callers from mutating this.
+ */
+let _healthProbeFn: (url: string) => Promise<{ ok: boolean; latency_ms: number }> =
   defaultHealthProbe;
 
-/** Reset for tests. */
+/**
+ * Reset health cache.
+ * TEST-ONLY — no-op outside NODE_ENV=test. Do not call in production code.
+ */
 export function _resetHealthCache(): void {
+  if (process.env['NODE_ENV'] !== 'test') return;
   _healthCache.clear();
 }
 
+/**
+ * Override the health probe function (e.g. to return a fixed result in tests).
+ * TEST-ONLY — no-op outside NODE_ENV=test. Do not call in production code.
+ */
 export function _setHealthProbeFn(
   fn: (url: string) => Promise<{ ok: boolean; latency_ms: number }>,
 ): void {
+  if (process.env['NODE_ENV'] !== 'test') return;
   _healthProbeFn = fn;
 }
 

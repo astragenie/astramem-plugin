@@ -5,7 +5,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TranscriptIngestPayloadSchema } from '../contracts/wire.ts';
+import { TranscriptIngestPayloadSchema, WIRE_VERSION } from '../contracts/wire.ts';
 import type { TranscriptIngestPayload, TranscriptTurn } from '../contracts/wire.ts';
 import { scrubWithLabels, SCRUB_VERSION } from '../lib/scrub.ts';
 import { appendIngestLog } from '../lib/log.ts';
@@ -308,6 +308,7 @@ export async function runIngestTranscript(
 
   // Build envelope
   const envelope: TranscriptIngestPayload = {
+    wire_version: WIRE_VERSION,
     event: args.event as 'pre_compact' | 'session_end' | 'subagent_stop',
     session_id: args.sessionId,
     project_id: args.projectId,

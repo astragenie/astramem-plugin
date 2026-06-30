@@ -1,4 +1,5 @@
 {
+  "wire_version": "v1.0",
   "event": "subagent_stop",
   "session_id": "aabbccdd-1111-2222-3333-000000000005",
   "project_id": "my-project",

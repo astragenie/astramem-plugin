@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SaasProvider } from '../../src/providers/saas.ts';
 import { runProviderContract, SAMPLE_INGEST, SAMPLE_RECALL } from './_contract.ts';
 import { DeterministicError, TransientError } from '../../src/lib/errors.ts';
+import { WIRE_VERSION } from '../../src/contracts/wire.ts';
 
 // ---------------------------------------------------------------------------
 // Contract suite
@@ -21,6 +22,83 @@ runProviderContract('SaasProvider', (baseUrl) => new SaasProvider(baseUrl));
 // ---------------------------------------------------------------------------
 // SaaS-specific tests
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Minimal TranscriptIngestPayload fixture for wire_version tests.
+// ---------------------------------------------------------------------------
+
+const SAMPLE_TRANSCRIPT_PAYLOAD = {
+  wire_version: WIRE_VERSION,
+  event: 'session_end' as const,
+  session_id: 'saas-test-sess-1',
+  project_id: 'saas-test-proj-1',
+  captured_at: '2026-06-30T00:00:00Z',
+  turns: [{ role: 'user' as const, text: 'hello from saas provider test' }],
+  client_scrub_applied: true,
+  client_scrub_hits: 0,
+  client_version: '0.5.0',
+  client_scrub_version: '2',
+};
+
+describe('SaasProvider — ingestTranscript sends wire_version', () => {
+  let origFetch: typeof globalThis.fetch;
+  let capturedBody: unknown;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    capturedBody = undefined;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (init?.body) {
+        try {
+          capturedBody = JSON.parse(init.body as string);
+        } catch {
+          capturedBody = init.body;
+        }
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+    capturedBody = undefined;
+  });
+
+  it('ingestTranscript POSTs body that includes wire_version: "v1.0"', async () => {
+    const provider = new SaasProvider('http://127.0.0.1:19998');
+    await provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD);
+    expect(capturedBody).toBeDefined();
+    expect((capturedBody as Record<string, unknown>)['wire_version']).toBe(WIRE_VERSION);
+  });
+
+  it('ingestTranscript wire_version matches the exported WIRE_VERSION constant', async () => {
+    const provider = new SaasProvider('http://127.0.0.1:19998');
+    await provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD);
+    expect((capturedBody as Record<string, unknown>)['wire_version']).toBe('v1.0');
+  });
+
+  it('ingestTranscript fills wire_version defensively if payload omits it', async () => {
+    const { wire_version: _omit, ...payloadWithout } = SAMPLE_TRANSCRIPT_PAYLOAD;
+    const provider = new SaasProvider('http://127.0.0.1:19998');
+    // Cast to bypass TS — simulates a runtime caller that skips schema validation
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await provider.ingestTranscript(payloadWithout as any);
+    expect((capturedBody as Record<string, unknown>)['wire_version']).toBe(WIRE_VERSION);
+  });
+
+  it('ingestTranscript resolves without error on 200', async () => {
+    const provider = new SaasProvider('http://127.0.0.1:19998');
+    await expect(provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD)).resolves.toBeUndefined();
+  });
+
+  it('ingestTranscript does not throw on 4xx (fire-and-forget)', async () => {
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response('{"error":"bad payload"}', { status: 422, headers: { 'Content-Type': 'application/json' } })
+    ) as typeof fetch;
+    const provider = new SaasProvider('http://127.0.0.1:19998');
+    await expect(provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD)).resolves.toBeUndefined();
+  });
+});
 
 describe('SaasProvider — URL resolution', () => {
   let origFetch: typeof globalThis.fetch;
@@ -171,6 +249,69 @@ describe('SaasProvider — error classes', () => {
     const provider = new SaasProvider('http://127.0.0.1:19998');
     const err = await provider.health().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TransientError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P-B3: defense-in-depth scrub inside ingestTranscript().
+// ---------------------------------------------------------------------------
+
+describe('SaasProvider — provider-layer scrub (P-B3)', () => {
+  let origFetch: typeof globalThis.fetch;
+  let capturedBody: Record<string, unknown> | undefined;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    capturedBody = undefined;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (init?.body) {
+        try { capturedBody = JSON.parse(init.body as string) as Record<string, unknown>; }
+        catch { /* ignore */ }
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+    capturedBody = undefined;
+  });
+
+  it('(a) raw bearer in turn text is redacted by provider when payload has not been scrubbed', async () => {
+    // Simulate a programmatic caller (MCP/SDK) that passes a raw secret in text.
+    const rawBearer = 'Bearer ' + 'a'.repeat(32) + 'b'.repeat(32);
+    const payload = {
+      ...SAMPLE_TRANSCRIPT_PAYLOAD,
+      client_scrub_applied: false,
+      client_scrub_hits: 0,
+      client_scrub_hits_by_label: {},
+      turns: [{ role: 'user' as const, text: rawBearer }],
+    };
+    const provider = new SaasProvider('http://127.0.0.1:19998');
+    await provider.ingestTranscript(payload);
+
+    expect(capturedBody).toBeDefined();
+    const postedBody = capturedBody as { turns?: { text: string }[]; client_scrub_hits?: number };
+    expect(postedBody.turns?.[0]?.text).not.toContain('a'.repeat(32) + 'b'.repeat(32));
+    expect(postedBody.turns?.[0]?.text).toBe('[REDACTED:bearer]');
+    expect(postedBody.client_scrub_hits).toBeGreaterThan(0);
+  });
+
+  it('(b) already-scrubbed payload passes through unchanged — scrubWithLabels is idempotent', async () => {
+    // Text already contains the redaction marker — second pass is a no-op.
+    const payload = {
+      ...SAMPLE_TRANSCRIPT_PAYLOAD,
+      turns: [{ role: 'user' as const, text: '[REDACTED:bearer]' }],
+      client_scrub_applied: true,
+      client_scrub_hits: 1,
+      client_scrub_hits_by_label: { bearer: 1 },
+    };
+    const provider = new SaasProvider('http://127.0.0.1:19998');
+    await provider.ingestTranscript(payload);
+
+    expect(capturedBody).toBeDefined();
+    const postedBody = capturedBody as { turns?: { text: string }[] };
+    expect(postedBody.turns?.[0]?.text).toBe('[REDACTED:bearer]');
   });
 });
 

@@ -5,6 +5,13 @@
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
+// Wire version — bump when the canonical envelope shape changes in a
+// backwards-incompatible way.  Server rejects unknown versions starting v0.8.0.
+// ---------------------------------------------------------------------------
+
+export const WIRE_VERSION = 'v1.0' as const;
+
+// ---------------------------------------------------------------------------
 // Ingest
 // ---------------------------------------------------------------------------
 
@@ -88,9 +95,18 @@ export type TranscriptTurn = z.infer<typeof TranscriptTurnSchema>;
 
 // Aligned with SaaS canonical IngestTranscriptRequest at:
 //   C:\work\mega\memory\src\AstraMemory.Api\Models\IngestTranscriptRequest.cs
-// Plus Slice 3.5 additions (client_scrub_version, client_scrub_hits_by_label).
-// `wire_version` field is pending — added when SaaS DTO catches up (FEAT 4a wire-contract slice).
+// Plus Slice 3.5 additions (client_scrub_version, client_scrub_hits_by_label, wire_version).
+// wire_version is REQUIRED (Phase 3 Stage 1 — FEAT 4a) — server uses it for
+// daemon-divergence detection; nullable would defeat that purpose.
+// .strict() rejects unknown fields — callers must map explicitly; prevents
+// accidental PII leakage through unrecognised keys, and forces consumers to
+// add new optional fields rather than forwarding arbitrary objects.
 export const TranscriptIngestPayloadSchema = z.object({
+  /** Wire format version — must equal WIRE_VERSION. Pattern: ASCII digits only, no
+   * leading zeros. Matches SaaS .NET DTO regex authoritatively (see memory
+   * IngestTranscriptRequest.cs M-R7). \d would match Unicode-category-Decimal
+   * (e.g. Arabic-Indic ١) — undesirable for a wire dispatch field. */
+  wire_version: z.string().regex(/^v(?:0|[1-9][0-9]*)\.[0-9]+$/),
   event: z.enum(['pre_compact', 'session_end', 'subagent_stop']),
   session_id: z.string(),
   project_id: z.string(),
@@ -107,7 +123,7 @@ export const TranscriptIngestPayloadSchema = z.object({
   client_scrub_version: z.string(),
   /** Per-label hit counts from scrubWithLabels() across all turns. */
   client_scrub_hits_by_label: z.record(z.string(), z.number().int().nonnegative()).optional(),
-});
+}).strict();
 
 export type TranscriptIngestPayload = z.infer<typeof TranscriptIngestPayloadSchema>;
 

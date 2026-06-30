@@ -106,9 +106,10 @@ export function getDeprecationHits(): Record<string, number> {
 
 /**
  * Reset hit counts and warning-suppression state.
- * TEST-ONLY — do not call in production code.
+ * TEST-ONLY — no-op outside NODE_ENV=test. Do not call in production code.
  */
 export function _resetEnvState(): void {
+  if (process.env['NODE_ENV'] !== 'test') return;
   _warnedAliases.clear();
   _hitCounts.clear();
 }
