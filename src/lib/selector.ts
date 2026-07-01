@@ -19,6 +19,7 @@ import type { MemoryProvider } from '../contracts/provider.ts';
 import { loadConfig } from './config.ts';
 import { resolveEnv } from './env.ts';
 import { ENV } from './env-specs.ts';
+import { resolveLocalUrl } from './local-url.ts';
 
 /** Options for resolveProvider. */
 export interface ResolvableOpts {
@@ -113,14 +114,8 @@ export async function resolveProvider(opts: ResolvableOpts = {}): Promise<Select
 // ---------------------------------------------------------------------------
 
 async function resolveAuto(): Promise<SelectorResult> {
-  // Default local URL — try config, fall back to default.
-  let localUrl = 'http://127.0.0.1:7777';
-  try {
-    const cfg = loadConfig();
-    if (cfg.local.url) localUrl = cfg.local.url;
-  } catch {
-    // ignore
-  }
+  // Env-first URL resolution (Finding 4 fix): env → config → default.
+  const localUrl = resolveLocalUrl();
 
   const probe = await cachedHealthProbe(localUrl);
 
@@ -134,9 +129,46 @@ async function resolveAuto(): Promise<SelectorResult> {
     };
   }
 
-  // Fallback to saas.
+  // Privacy-safe fallback policy: only fall back to SaaS when SaaS is explicitly
+  // configured. Silent fallback to SaaS when the user has NOT configured it violates
+  // the data-local product posture — local data could be sent to a SaaS endpoint
+  // the user never opted into.
+  const saasConfigured = isSaasConfigured();
+
+  if (!saasConfigured) {
+    throw new Error(
+      `Local daemon unreachable at ${localUrl} and SaaS not configured. ` +
+        `data-local posture: refusing to fall back to SaaS. ` +
+        `To configure SaaS explicitly, set MEMORY_API_URL_SAAS or run astramem config set saas.url <url>.`,
+    );
+  }
+
+  // Fallback to saas (user has explicitly configured SaaS).
   const provider = await loadProvider('saas');
   return { provider, providerName: 'saas', source: 'fallback' };
+}
+
+/**
+ * Returns true when SaaS is explicitly configured via env or config.
+ * Used to enforce the data-local posture: refuse silent SaaS fallback when the
+ * user has not opted into SaaS.
+ */
+function isSaasConfigured(): boolean {
+  // Check env first (canonical + alias).
+  const envResult = resolveEnv(ENV['apiUrlSaas']!);
+  if (envResult.source === 'canonical' || envResult.source === 'alias') {
+    return true;
+  }
+
+  // Check config.
+  try {
+    const cfg = loadConfig();
+    if (cfg.saas.url) return true;
+  } catch {
+    // Config unreadable — treat as not configured.
+  }
+
+  return false;
 }
 
 async function cachedHealthProbe(url: string): Promise<{ ok: boolean; latency_ms: number }> {
