@@ -5,13 +5,15 @@
  *
  * NOTE: These tests require Track A providers to be available for full integration.
  * Until Track A lands, the selector falls back to NullProvider, which means:
- *   - ingest exits 0 (fire-and-forget, errors logged)
  *   - recall exits 3 (backend error)
  *   - remember exits 3 (backend error)
  *   - health exits 3 (NullProvider returns ok=false)
  *   - doctor exits 0 (always)
  *   - config exits 0
  *   - connect exits 3 (no daemon running)
+ *
+ * Note: `astramem ingest` (generic) was removed in v0.5.2.
+ *       Use `astramem ingest-transcript` for transcript ingestion.
  *
  * Track A integration: remove the .skip from the "full integration" suite below.
  */
@@ -44,10 +46,13 @@ function runBin(args: string[], env: Record<string, string> = {}): SpawnResult {
 }
 
 describe('astramem dispatch (bin/astramem)', () => {
-  it('--help exits 0 and lists all 7 subcommands', () => {
+  it('--help exits 0 and lists all 6 subcommands (no generic ingest)', () => {
     const r = runBin(['--help']);
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/ingest/);
+    // ingest-transcript still present (hook shim target)
+    expect(r.stdout).toMatch(/ingest-transcript/);
+    // generic 'ingest' command removed in v0.5.2 — must NOT appear as a top-level subcommand
+    expect(r.stdout).not.toMatch(/^  ingest\s/m);
     expect(r.stdout).toMatch(/recall/);
     expect(r.stdout).toMatch(/remember/);
     expect(r.stdout).toMatch(/health/);
@@ -59,7 +64,7 @@ describe('astramem dispatch (bin/astramem)', () => {
   it('--version exits 0 and prints version', () => {
     const r = runBin(['--version']);
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/0\.4\.0/);
+    expect(r.stdout).toMatch(/0\.5\.2/);
   });
 
   it('unknown subcommand exits 1', () => {
@@ -67,32 +72,12 @@ describe('astramem dispatch (bin/astramem)', () => {
     expect(r.status).toBe(1);
   });
 
-  describe('ingest — fire-and-forget (exit 0 always)', () => {
-    let tmpDir: string;
-
-    it('exits 0 with valid payload even when no provider reachable', () => {
-      tmpDir = mkdtempSync(join(tmpdir(), 'astramem-e2e-'));
-      const r = runBin(
-        ['ingest', '--json', '{"id":"e2e-1","type":"transcript","text":"hello e2e"}'],
-        { APPDATA: tmpDir },
-      );
-      rmSync(tmpDir, { recursive: true, force: true });
-      expect(r.status).toBe(0);
-    });
-
-    it('exits 0 even with missing --json', () => {
-      tmpDir = mkdtempSync(join(tmpdir(), 'astramem-e2e-'));
-      const r = runBin(['ingest'], { APPDATA: tmpDir });
-      rmSync(tmpDir, { recursive: true, force: true });
-      expect(r.status).toBe(0);
-    });
-
-    it('exits 0 with invalid JSON payload', () => {
-      tmpDir = mkdtempSync(join(tmpdir(), 'astramem-e2e-'));
-      const r = runBin(['ingest', '--json', '{bad json}'], { APPDATA: tmpDir });
-      rmSync(tmpDir, { recursive: true, force: true });
-      expect(r.status).toBe(0);
-    });
+  it('ingest (generic) exits 1 as unknown subcommand after v0.5.2 removal', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'astramem-e2e-'));
+    const r = runBin(['ingest', '--json', '{"id":"x","type":"transcript","text":"t"}'], { APPDATA: tmpDir });
+    rmSync(tmpDir, { recursive: true, force: true });
+    // Removed subcommand — exits 1 (unknown subcommand path)
+    expect(r.status).toBe(1);
   });
 
   describe('health — JSON output shape', () => {

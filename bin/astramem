@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 // astramem — AstraMemory CLI dispatcher (Wave 2 Track C)
-// Subcommands: ingest | recall | remember | health | config | doctor | connect
+// Subcommands: ingest-transcript | recall | remember | health | config | doctor | connect
 // Global: --provider local|saas|auto  (parsed, stored, passed to subcommands)
 //         --help | -h                  (prints usage)
-//         --version                    (prints 0.4.0)
+//         --version                    (prints 0.5.2)
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.2';
 
-const SUBCOMMANDS = ['ingest', 'ingest-transcript', 'recall', 'remember', 'health', 'config', 'doctor', 'connect'] as const;
+const SUBCOMMANDS = ['ingest-transcript', 'recall', 'remember', 'health', 'config', 'doctor', 'connect'] as const;
 type Subcommand = typeof SUBCOMMANDS[number];
 type Provider = 'local' | 'saas' | 'auto';
 
@@ -17,14 +17,13 @@ astramem — AstraMemory CLI v${VERSION}
 Usage: astramem [--provider local|saas|auto] <subcommand> [options]
 
 Subcommands:
-  ingest              Ingest a payload into AstraMemory (fire-and-forget)
   ingest-transcript   Ingest a JSONL transcript file (fire-and-forget; hook shim target)
   recall              Recall memories matching a query
-  remember   Store a new memory item
-  health     Probe the selected provider's /health endpoint
-  config     Get or set configuration (config get [key] | config set <key> <val>)
-  doctor     Diagnose selector resolution, logs, env vars, and config
-  connect    Connect to the local AstraMemory daemon
+  remember            Store a new memory item
+  health              Probe the selected provider's /health endpoint
+  config              Get or set configuration (config get [key] | config set <key> <val>)
+  doctor              Diagnose selector resolution, logs, env vars, and config
+  connect             Connect to the local AstraMemory daemon
 
 Global flags:
   --provider local|saas|auto  Override provider selection
@@ -94,11 +93,6 @@ async function main(): Promise<void> {
   let exitCode = 0;
 
   switch (subcommand) {
-    case 'ingest': {
-      const { runIngest } = await import('../src/cli/ingest.ts');
-      exitCode = await runIngest(subArgs, { provider: providerFlag });
-      break;
-    }
     case 'ingest-transcript': {
       const { runIngestTranscript } = await import('../src/cli/ingest-transcript.ts');
       exitCode = await runIngestTranscript(subArgs, { provider: providerFlag });

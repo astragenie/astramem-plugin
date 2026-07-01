@@ -1,14 +1,17 @@
 /**
  * E2E: plugin-flow.test.ts
  *
- * Tests the full `bun bin/astramem ingest` dispatch path with mocked providers.
+ * Tests the full plugin dispatch path with mocked providers.
  * No real network calls are made.
  *
  * Strategy:
- *   - Use the runIngest / runRecall / runRemember functions directly (unit-level E2E)
+ *   - Use the runRecall / runRemember functions directly (unit-level E2E)
  *     with injected MockProvider so the selector is bypassed.
  *   - Redirect APPDATA to a temp dir so log writes land in an isolated location.
  *   - Assert: exit code, provider stub called, log line written, no bearer in log.
+ *
+ * Note: runIngest (generic ingest) was removed in v0.5.2 — dead code / footgun.
+ *       Use runIngestTranscript for transcript ingestion.
  *
  * Skipped on Windows via describe.skipIf — astramem-dispatch.test.ts already covers
  * the subprocess smoke path on Win32.
@@ -17,7 +20,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { runIngest } from '../../src/cli/ingest.ts';
 import { runRecall } from '../../src/cli/recall.ts';
 import { runRemember } from '../../src/cli/remember.ts';
 import { createMockProvider, createFailingProvider } from '../cli/mock-provider.ts';
@@ -96,65 +98,6 @@ describe.skipIf(process.platform === 'win32')('plugin-flow e2e (POSIX)', () => {
   afterEach(() => {
     cap.restore();
     cleanupTmpDir();
-  });
-
-  // -------------------------------------------------------------------------
-  // ingest
-  // -------------------------------------------------------------------------
-
-  describe('runIngest — routed to mock local provider', () => {
-    it('exits 0 and calls provider.ingest with valid payload', async () => {
-      const provider = createMockProvider();
-      const code = await runIngest(
-        ['--json', JSON.stringify({ id: 'e2e-1', type: 'transcript', text: 'hello e2e' })],
-        { _provider: provider },
-      );
-      expect(code).toBe(0);
-      expect(provider._stubs.ingest).toHaveBeenCalledOnce();
-      const arg = provider._stubs.ingest.mock.calls[0]![0];
-      expect(arg).toMatchObject({ id: 'e2e-1', type: 'transcript', text: 'hello e2e' });
-    });
-
-    it('writes a log line after ingest', async () => {
-      const provider = createMockProvider();
-      await runIngest(
-        ['--json', JSON.stringify({ id: 'log-test', type: 'fact', text: 'log assertion' })],
-        { _provider: provider },
-      );
-      // Give appendIngestLog a tick to complete (it's sync, but allow event-loop flush)
-      await new Promise((r) => setTimeout(r, 10));
-      const lines = readLogLines();
-      // The log may be empty if no error path fired — ingest success doesn't log by default.
-      // Verify no Bearer appears in any log line that was written.
-      for (const line of lines) {
-        expect(line).not.toMatch(/Bearer\s+[A-Fa-f0-9]{32,}/);
-      }
-    });
-
-    it('exits 0 even when provider throws, and no raw bearer in log', async () => {
-      const fakeBearer = 'Bearer ' + 'a'.repeat(64);
-      const provider = createFailingProvider(`network error: ${fakeBearer}`);
-      const code = await runIngest(
-        ['--json', JSON.stringify({ id: 'err-test', type: 'note', text: 'error flow' })],
-        { _provider: provider },
-      );
-      expect(code).toBe(0);
-      await new Promise((r) => setTimeout(r, 20));
-      const lines = readLogLines();
-      // At least one error log line should have been written
-      expect(lines.length).toBeGreaterThan(0);
-      // Bearer must be scrubbed in every log line
-      for (const line of lines) {
-        expect(line).not.toMatch(/Bearer\s+[A-Fa-f0-9]{32,}/);
-      }
-    });
-
-    it('exits 0 with missing --json (fire-and-forget)', async () => {
-      const provider = createMockProvider();
-      const code = await runIngest([], { _provider: provider });
-      expect(code).toBe(0);
-      expect(provider._stubs.ingest).not.toHaveBeenCalled();
-    });
   });
 
   // -------------------------------------------------------------------------

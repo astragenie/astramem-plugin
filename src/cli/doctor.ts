@@ -9,6 +9,7 @@ import { loadConfig } from '../lib/config.ts';
 import { readIngestLogTail } from '../lib/log.ts';
 import { getDeprecationHits } from '../lib/env.ts';
 import { ENV } from '../lib/env-specs.ts';
+import { resolveLocalUrlWithSource } from '../lib/local-url.ts';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -99,12 +100,12 @@ export async function runDoctor(args: string[] = []): Promise<number> {
     lines.push('  Using defaults: provider=auto, local.url=http://127.0.0.1:7777');
   }
 
-  // 3. Local daemon probe
+  // 3. Local daemon probe (Finding 5 fix: env-first URL via resolveLocalUrlWithSource)
   lines.push('');
   lines.push('LOCAL PROBE');
+  const localUrlResolution = resolveLocalUrlWithSource();
+  const localUrl = localUrlResolution.url;
   try {
-    const cfg = loadConfig();
-    const localUrl = cfg.local.url ?? 'http://127.0.0.1:7777';
     const start = Date.now();
     const resp = await Promise.race([
       fetch(`${localUrl}/health`),
@@ -112,12 +113,12 @@ export async function runDoctor(args: string[] = []): Promise<number> {
     ]);
     const latency = Date.now() - start;
     if (resp.ok) {
-      lines.push(`  local daemon @ ${localUrl}: OK (${latency}ms)`);
+      lines.push(`  local daemon @ ${localUrl} [source: ${localUrlResolution.source}]: OK (${latency}ms)`);
     } else {
-      lines.push(`  local daemon @ ${localUrl}: HTTP ${resp.status} (${latency}ms)`);
+      lines.push(`  local daemon @ ${localUrl} [source: ${localUrlResolution.source}]: HTTP ${resp.status} (${latency}ms)`);
     }
   } catch (e) {
-    lines.push(`  local daemon: UNREACHABLE — ${(e as Error).message}`);
+    lines.push(`  local daemon @ ${localUrl} [source: ${localUrlResolution.source}]: UNREACHABLE — ${(e as Error).message}`);
   }
 
   // 4. SaaS probe
@@ -174,6 +175,8 @@ export async function runDoctor(args: string[] = []): Promise<number> {
             : process.env[v] ?? null,
         ]),
       ),
+      local_url: localUrl,
+      local_url_source: localUrlResolution.source,
       deprecation_hits: deprecationHits,
     };
     process.stdout.write(JSON.stringify(output, null, 2) + '\n');

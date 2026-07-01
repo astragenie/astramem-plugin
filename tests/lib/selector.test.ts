@@ -62,6 +62,15 @@ function writeConfig(provider: 'local' | 'saas' | 'auto') {
   );
 }
 
+/** Write config with explicit saas.url so the privacy-safe guard passes. */
+function writeConfigWithSaas(provider: 'local' | 'saas' | 'auto', saasUrl = 'https://saas.example.com') {
+  mkdirSync(tempDir, { recursive: true });
+  writeFileSync(
+    join(tempDir, 'config.json'),
+    JSON.stringify({ provider, local: {}, saas: { url: saasUrl }, logging: { level: 'silent' } }),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Precedence matrix tests
 // ---------------------------------------------------------------------------
@@ -136,8 +145,9 @@ describe('resolveProvider — precedence matrix', () => {
     expect(result.latency_probe_ms).toBe(8);
   });
 
-  it('fallback to saas when auto probe fails', async () => {
-    writeConfig('auto');
+  it('fallback to saas when auto probe fails (saas configured via config)', async () => {
+    // saas.url must be configured — privacy-safe guard rejects silent fallback otherwise.
+    writeConfigWithSaas('auto');
     const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
     _resetHealthCache();
     _setHealthProbeFn(async () => ({ ok: false, latency_ms: 200 }));
@@ -158,8 +168,10 @@ describe('resolveProvider — precedence matrix', () => {
     expect(result.providerName).toBe('local');
   });
 
-  it('fallback when no config exists and local is down', async () => {
+  it('fallback when no config exists and local is down (saas configured via env)', async () => {
+    // No config file — but SaaS is configured via env so fallback is allowed.
     mkdirSync(tempDir, { recursive: true });
+    vi.stubEnv('MEMORY_API_URL_SAAS', 'https://saas.example.com');
     const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
     _resetHealthCache();
     _setHealthProbeFn(async () => ({ ok: false, latency_ms: 5001 }));
@@ -234,5 +246,69 @@ describe('resolveProvider — health probe cache', () => {
     expect(probeFn).toHaveBeenCalledTimes(1);
     expect(r1.source).toBe(r2.source);
     expect(r1.providerName).toBe(r2.providerName);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Privacy-safe auto-probe policy tests
+// ---------------------------------------------------------------------------
+describe('resolveProvider — data-local privacy-safe policy', () => {
+  it('saas configured + local up → picks local (source=auto)', async () => {
+    writeConfigWithSaas('auto');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 4 }));
+
+    const result = await resolveProvider({});
+    expect(result.source).toBe('auto');
+    expect(result.providerName).toBe('local');
+  });
+
+  it('saas configured + local down → falls back to saas (source=fallback)', async () => {
+    writeConfigWithSaas('auto');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: false, latency_ms: 150 }));
+
+    const result = await resolveProvider({});
+    expect(result.source).toBe('fallback');
+    expect(result.providerName).toBe('saas');
+  });
+
+  it('saas NOT configured + local up → picks local (source=auto)', async () => {
+    writeConfig('auto'); // no saas.url
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 6 }));
+
+    const result = await resolveProvider({});
+    expect(result.source).toBe('auto');
+    expect(result.providerName).toBe('local');
+  });
+
+  it('saas NOT configured + local down → throws data-local refusal error', async () => {
+    writeConfig('auto'); // no saas.url
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: false, latency_ms: 5000 }));
+
+    await expect(resolveProvider({})).rejects.toThrow(/data-local/);
+  });
+
+  it('data-local refusal error message includes "data-local" phrase (grepping support)', async () => {
+    writeConfig('auto'); // no saas.url
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: false, latency_ms: 5000 }));
+
+    let errorMessage = '';
+    try {
+      await resolveProvider({});
+    } catch (e) {
+      errorMessage = (e as Error).message;
+    }
+    expect(errorMessage).toMatch(/data-local/);
+    expect(errorMessage).toMatch(/refusing to fall back to SaaS/);
+    expect(errorMessage).toMatch(/MEMORY_API_URL_SAAS/);
   });
 });
