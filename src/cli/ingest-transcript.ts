@@ -2,14 +2,16 @@
 // FEAT 4a §4.1.1: reads a JSONL transcript file, filters/tails/truncates,
 // applies scrub per turn, builds a TranscriptIngestPayload envelope, POSTs
 // via LocalProvider.ingestTranscript(). Always exits 0 (fire-and-forget contract).
-import { readFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { join, dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TranscriptIngestPayloadSchema, WIRE_VERSION } from '../contracts/wire.ts';
 import type { TranscriptIngestPayload, TranscriptTurn } from '../contracts/wire.ts';
 import { scrubWithLabels, SCRUB_VERSION } from '../lib/scrub.ts';
 import { appendIngestLog } from '../lib/log.ts';
 import { resolveProvider } from '../lib/selector.ts';
+import { enqueue, drain, capEnforce } from '../lib/pending.ts';
+import { TransientError } from '../lib/errors.ts';
 import type { Provider } from '../contracts/selector.ts';
 
 // ---------------------------------------------------------------------------
@@ -265,16 +267,60 @@ export async function runIngestTranscript(
     return 0;
   }
 
-  // Read transcript file — file-not-found → silent exit 0 (fire-and-forget)
-  let raw: string;
-  try {
-    if (!existsSync(args.transcriptPath)) {
-      appendIngestLog(`ingest-transcript: transcript file not found: ${args.transcriptPath}`);
+  // Normalize path: resolve() canonicalises separators, drive-letter case, and
+  // removes doubled backslashes that Claude Code may produce on Windows.
+  // This is the primary fix for issue #12.
+  const resolvedPath = pathResolve(args.transcriptPath);
+
+  if (process.env['ASTRAMEM_HOOK_DEBUG'] === '1') {
+    const parentDir = dirname(resolvedPath);
+    let dirListing = '(dir not found)';
+    try {
+      dirListing = existsSync(parentDir)
+        ? readdirSync(parentDir).join(', ') || '(empty)'
+        : '(dir not found)';
+    } catch { /* ignore */ }
+    process.stderr.write(
+      `[astramem-hook-debug] cwd=${process.cwd()} resolved=${resolvedPath} parent-ls=[${dirListing}]\n`,
+    );
+  }
+
+  // Read transcript file — poll up to 3 times with 200ms delay to handle the
+  // race where Claude Code fires the hook before finishing the JSONL write.
+  // This is the primary fix for issue #12 (race condition).
+  let raw: string | undefined;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      // 200ms, 500ms total gap (200 + 300)
+      await new Promise<void>((r) => setTimeout(r, attempt === 1 ? 200 : 300));
+    }
+    try {
+      if (!existsSync(resolvedPath)) {
+        if (attempt < 2) continue; // will retry
+        // Final attempt — check if parent dir exists for better diagnostics
+        const parentDir = dirname(resolvedPath);
+        if (!existsSync(parentDir)) {
+          appendIngestLog(
+            `ingest-transcript: transcript parent dir not found: ${parentDir} (raw path: ${args.transcriptPath})`,
+          );
+        } else {
+          appendIngestLog(
+            `ingest-transcript: transcript file not found after 3 attempts: ${resolvedPath} (raw path: ${args.transcriptPath})`,
+          );
+        }
+        return 0;
+      }
+      raw = readFileSync(resolvedPath, 'utf-8');
+      break; // success
+    } catch (e) {
+      if (attempt < 2) continue;
+      appendIngestLog(`ingest-transcript: failed to read transcript: ${(e as Error).message}`);
       return 0;
     }
-    raw = readFileSync(args.transcriptPath, 'utf-8');
-  } catch (e) {
-    appendIngestLog(`ingest-transcript: failed to read transcript: ${(e as Error).message}`);
+  }
+
+  if (raw === undefined) {
+    appendIngestLog(`ingest-transcript: transcript file not found: ${resolvedPath}`);
     return 0;
   }
 
@@ -346,15 +392,50 @@ export async function runIngestTranscript(
     return 0;
   }
 
+  // Drain pending queue before attempting the live call (Bug B fix — issue #13).
+  // Oldest files processed first, up to DRAIN_BATCH_SIZE per hook invocation.
+  // capEnforce() runs first to prevent unbounded growth before drain reads the list.
+  capEnforce();
+  await drain(provider);
+
   // Fire-and-forget: race the call against 2s timeout
   try {
     const call = provider.ingestTranscript(validation.data);
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, 2000));
     await Promise.race([call, timeout]);
   } catch (e) {
-    appendIngestLog(`ingest-transcript: provider error — ${(e as Error).message}`);
+    const err = e as Error;
+    appendIngestLog(`ingest-transcript: provider error — ${err.message}`);
+    // Bug B fix (issue #13): on transient failure, persist to pending/ for retry.
+    // On deterministic or unknown failure, log only — no retry (e.g. bad payload).
+    if (err instanceof TransientError || isTransientCause(err)) {
+      enqueue(validation.data);
+    }
     // Intentionally swallow — fire-and-forget
   }
 
   return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Internal: transient failure heuristics
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true if an error looks like a transient network failure even when
+ * not wrapped in TransientError (e.g. bare TypeError from fetch on ECONNREFUSED,
+ * or the Promise.race() timeout resolving before the provider rejects).
+ */
+function isTransientCause(err: Error): boolean {
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes('econnrefused') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('network') ||
+    msg.includes('fetch failed') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('socket hang up') ||
+    msg.includes('connect enoent') // Unix socket not found
+  );
 }
