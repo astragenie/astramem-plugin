@@ -62,8 +62,10 @@ const SKIP_REASON = !DIST_ROOT
     'repo root containing a built dist/ (e.g. ASTRAMEM_LOCAL_DIST_PATH=C:\\work\\mega\\astramemory-local) ' +
     'to run this roundtrip test.'
   : !DAEMON_ENTRY_EXISTS
-    ? `SKIPPED (actionable): ASTRAMEM_LOCAL_DIST_PATH=${DIST_ROOT} has no dist/cli/index.js. ` +
-      'Run "bun install && bun run build" in that repo first.'
+    ? `SKIPPED (actionable): ASTRAMEM_LOCAL_DIST_PATH=${DIST_ROOT} has no dist/cli/index.js under it. ` +
+      'The variable must point at the astramemory-local REPO ROOT (not its dist/ folder), ' +
+      'e.g. ASTRAMEM_LOCAL_DIST_PATH=C:\\work\\mega\\astramemory-local. ' +
+      'If it already points at the repo root, run "bun install && bun run build" there first.'
     : null;
 
 if (SKIP_REASON) {
