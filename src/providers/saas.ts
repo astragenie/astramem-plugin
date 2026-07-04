@@ -4,17 +4,22 @@
  * Implements MemoryProvider against the SaaS gateway at MEMORY_API_URL_SAAS
  * (canonical deployment: https://api.astramemory.com).
  *
- * Endpoint map vs SaaS server (see C:\work\mega\memory\src\AstraMemory.Api\Controllers):
- *   - POST /ingest/transcript  → handled by TranscriptIngestController
- *   - POST /memories/search    → handled by MemoriesController (recall)
- *   - POST /memories           → handled by MemoriesController (remember)
- *   - GET  /health             → handled by HealthController
- *   - GET  /version            → handled by HealthController
+ * Endpoint map vs SaaS server (see C:\work\mega\memory\src):
+ *   - POST /ingest/transcript  → TranscriptIngestController
+ *   - POST /memories/search    → Modules.Search SearchController (recall)
+ *   - POST /memories           → Modules.Memories MemoriesController.Store (remember)
+ *   - GET  /health             → HealthController
+ *   - GET  /version            → HealthController
  *
- * WIRE BUGS (FEAT 4a wire-contract unification — partially fixed):
- *   - recall() posts to /recall — SaaS has /memories/search
- *   - remember() posts to /remember — SaaS has /memories POST
- *   - ingestTranscript() added (Phase 3 Stage 1) — sends wire_version per FEAT 4a
+ * Wire mapping (FEAT 4a §4.2.4 — URL fix; shapes mapped in this provider):
+ *   - recall():   RecallRequest {query,k,repo,project} → SaaS SearchRequest
+ *                 {query, top_k, source, project_id}; SaaS SearchResponse
+ *                 {results,total,mode} → RecallResponse {hits,total_searched,provider}
+ *   - remember(): IngestPayload {id,type,text,...} → SaaS StoreMemoryRequest
+ *                 {content,type,project_id,...}. project_id is REQUIRED by SaaS;
+ *                 derived from metadata.project_id → metadata.project → basename(cwd)
+ *                 (same default-workspace convention as astramem-local).
+ *   - ingestTranscript() sends wire_version per FEAT 4a Phase 3 Stage 1
  *
  * Bearer is read from lib/clerkAuthFile.ts (already exists — Wave 1 migrated).
  * URL from config.saas.url or env MEMORY_API_URL_SAAS.
@@ -30,6 +35,8 @@
  *   5xx / network → TransientError (retry once for ingest; throw for recall/remember/health)
  */
 
+import { basename } from 'node:path';
+import { z } from 'zod';
 import type { MemoryProvider } from '../contracts/provider.ts';
 import type {
   IngestPayload,
@@ -104,6 +111,48 @@ async function buildHeaders(bearerOverride?: string): Promise<Record<string, str
     headers['Authorization'] = `Bearer ${bearer}`;
   }
   return headers;
+}
+
+// ---------------------------------------------------------------------------
+// SaaS wire shapes (provider-local — the SaaS REST contract differs from the
+// unified plugin wire shapes in contracts/wire.ts; this provider owns the map).
+// Mirrors C:\work\mega\memory\src\AstraMemory.Modules.Search\Application\SearchQuery.cs
+// and Modules.Memories\Models\MemoryModels.cs (StoreMemoryRequest).
+// ---------------------------------------------------------------------------
+
+/** Result item subset we consume from SaaS POST /memories/search. Passthrough
+ * of unknown fields is fine — .parse strips them (non-strict). */
+const SaasSearchResultItemSchema = z.object({
+  id: z.union([z.string(), z.number()]).transform(String),
+  type: z.string(),
+  content: z.string(),
+  importance: z.number().optional(),
+  rank_score: z.number(),
+  source: z.string().nullable().optional(),
+  confidence_score: z.number().optional(),
+});
+
+const SaasSearchResponseSchema = z.object({
+  results: z.array(SaasSearchResultItemSchema),
+  total: z.number().int(),
+});
+
+/** Clamp to the RecallHit score domain [0,1] — rank_score is a weighted blend
+ * that should already be in-domain, but the reranker path may perturb it. */
+function clamp01(n: number): number {
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
+ * Derive the SaaS project_id for remember().
+ * SaaS POST /memories rejects requests without project_id (400). Precedence:
+ * metadata.project_id → metadata.project → basename(cwd) — the same
+ * default-workspace convention astramem-local uses (repo dir name).
+ */
+function resolveProjectId(metadata: Record<string, unknown> | undefined): string {
+  const explicit = metadata?.['project_id'] ?? metadata?.['project'];
+  if (typeof explicit === 'string' && explicit.length > 0) return explicit;
+  return basename(process.cwd());
 }
 
 async function assertOk(res: Response, context: string): Promise<void> {
@@ -233,28 +282,66 @@ export class SaasProvider implements MemoryProvider {
 
   async recall(req: RecallRequest): Promise<RecallResponse> {
     const headers = await buildHeaders();
+    // Map unified RecallRequest → SaaS SearchRequest. top_k takes precedence
+    // over limit server-side and is capped at 50 there; repo maps to `source`
+    // (the SaaS field for originating repo/file) and project to project_id.
+    const body: Record<string, unknown> = {
+      query: req.query,
+      top_k: req.k,
+    };
+    if (req.project !== undefined) body['project_id'] = req.project;
+    if (req.repo !== undefined) body['source'] = req.repo;
+
     const res = await fetchWithTimeout(
-      `${this.baseUrl}/recall`,
+      `${this.baseUrl}/memories/search`,
       {
         method: 'POST',
         headers,
-        body: JSON.stringify(req),
+        body: JSON.stringify(body),
       },
       5000,
     );
     await assertOk(res, 'recall');
     const json: unknown = await res.json();
-    return RecallResponseSchema.parse(json);
+    const saas = SaasSearchResponseSchema.parse(json);
+    // Map SaaS SearchResponse → unified RecallResponse.
+    const mapped: RecallResponse = {
+      hits: saas.results.map((r) => ({
+        id: r.id,
+        type: r.type,
+        text: r.content,
+        score: clamp01(r.rank_score),
+        ...(r.source != null ? { source: r.source } : {}),
+        ...(r.importance !== undefined ? { importance: clamp01(r.importance) } : {}),
+        ...(r.confidence_score !== undefined ? { confidence: clamp01(r.confidence_score) } : {}),
+      })),
+      total_searched: saas.total,
+      provider: 'saas',
+    };
+    return RecallResponseSchema.parse(mapped);
   }
 
   async remember(req: IngestPayload): Promise<void> {
     const headers = await buildHeaders();
+    // Map unified IngestPayload → SaaS StoreMemoryRequest. project_id is
+    // required by the SaaS API; the plugin-side payload id is preserved as
+    // metadata.client_id so round-trips stay traceable.
+    const body: Record<string, unknown> = {
+      content: req.text,
+      type: req.type,
+      project_id: resolveProjectId(req.metadata),
+      metadata: { ...(req.metadata ?? {}), client_id: req.id },
+    };
+    if (req.importance !== undefined) body['importance'] = req.importance;
+    if (req.confidence !== undefined) body['confidence'] = req.confidence;
+    if (req.source !== undefined) body['source'] = req.source;
+
     const res = await fetchWithTimeout(
-      `${this.baseUrl}/remember`,
+      `${this.baseUrl}/memories`,
       {
         method: 'POST',
         headers,
-        body: JSON.stringify(req),
+        body: JSON.stringify(body),
       },
       5000,
     );
