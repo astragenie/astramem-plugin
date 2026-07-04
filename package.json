@@ -17,6 +17,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:smoke": "vitest run tests/e2e/plugin-daemon-roundtrip.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
