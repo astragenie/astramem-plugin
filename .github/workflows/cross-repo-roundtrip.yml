@@ -1,0 +1,95 @@
+# FEAT-411 — cross-repo plugin<->daemon wire-contract gate (mirror side).
+#
+# astramem-local (the daemon) is PRIVATE, so checking it out from here needs a
+# PAT with repo-read access, stored as the ASTRAMEM_LOCAL_TOKEN secret. Forks
+# and any clone where that secret isn't configured have no way to authenticate
+# the checkout — this job must SKIP cleanly in that case (AC-5), never fail.
+#
+# The primary enforcement point for this contract is the astramem-local repo's
+# own .github/workflows/cross-repo-roundtrip.yml, which checks out this
+# (public) plugin repo with no token and therefore always runs. This workflow
+# is a secondary/best-effort check from the plugin side, gated on the operator
+# wiring the secret below.
+#
+# Operator setup (one-time):
+#   1. Create a fine-grained PAT (or GitHub App installation token) with
+#      read-only "Contents" access scoped to astragenie/astramem-local.
+#   2. Add it as a repository (or org) secret named ASTRAMEM_LOCAL_TOKEN in
+#      astragenie/astramem-plugin's Settings -> Secrets and variables -> Actions.
+#   3. Without step 2, this job's steps after "Check for daemon access token"
+#      are skipped and the job still reports success (see gating below).
+#
+# Job name is intentionally stable ("cross-repo-roundtrip") in case an operator
+# later wants to add it as a required status check — see FEAT-411 report for
+# why the astramem-local-side job is the recommended required check instead.
+
+name: Cross-Repo Roundtrip
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  cross-repo-roundtrip:
+    name: cross-repo-roundtrip
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Job-level `if:` cannot see the `secrets` context (only step-level can),
+      # so gating is done via a first step that resolves presence into a step
+      # output, which every later step's `if:` then checks.
+      - name: Check for daemon repo access token
+        id: check-secret
+        env:
+          DAEMON_TOKEN: ${{ secrets.ASTRAMEM_LOCAL_TOKEN }}
+        run: |
+          if [ -n "$DAEMON_TOKEN" ]; then
+            echo "has-token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-token=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip notice (secret not configured)
+        if: steps.check-secret.outputs.has-token != 'true'
+        run: |
+          echo "::notice::ASTRAMEM_LOCAL_TOKEN secret not set (expected on forks or before operator setup) — skipping cross-repo roundtrip. See this workflow file's header comment for setup steps. The astramem-local-side job is the primary gate for this contract."
+
+      - name: Checkout plugin (this repo)
+        if: steps.check-secret.outputs.has-token == 'true'
+        uses: actions/checkout@v4
+
+      - name: Checkout daemon (private, requires PAT)
+        if: steps.check-secret.outputs.has-token == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: astragenie/astramem-local
+          token: ${{ secrets.ASTRAMEM_LOCAL_TOKEN }}
+          path: daemon
+
+      - name: Setup Bun 1.3
+        if: steps.check-secret.outputs.has-token == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3'
+
+      - name: Install + build daemon
+        if: steps.check-secret.outputs.has-token == 'true'
+        working-directory: daemon
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Install plugin dependencies
+        if: steps.check-secret.outputs.has-token == 'true'
+        run: bun install --frozen-lockfile
+
+      # AC-1/AC-2/AC-5: same wire-contract check as the astramem-local-side
+      # job. vitest exits non-zero on assertion failure — no swallowing.
+      - name: Run plugin<->daemon roundtrip test
+        if: steps.check-secret.outputs.has-token == 'true'
+        env:
+          ASTRAMEM_LOCAL_DIST_PATH: ${{ github.workspace }}/daemon
+        run: bun run test:smoke
