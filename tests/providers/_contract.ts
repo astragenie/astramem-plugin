@@ -28,7 +28,7 @@ export const SAMPLE_RECALL = {
   k: 3,
 } as const;
 
-/** Minimal valid RecallResponse body served by mock. */
+/** Minimal valid RecallResponse body served by mock (local daemon shape). */
 export const MOCK_RECALL_RESPONSE = {
   hits: [
     {
@@ -41,6 +41,46 @@ export const MOCK_RECALL_RESPONSE = {
   total_searched: 100,
   provider: 'test',
 } as const;
+
+/** SaaS-shaped POST /memories/search response body served by mock. */
+export const MOCK_SAAS_SEARCH_RESPONSE = {
+  results: [
+    {
+      id: '00000000-0000-0000-0000-000000000001',
+      type: 'transcript',
+      scope: 'private',
+      content: 'relevant memory',
+      importance: 0.5,
+      similarity: 0.88,
+      rank_score: 0.91,
+      created_at: '2026-07-04T00:00:00Z',
+      metadata: null,
+      confidence_score: 0.5,
+    },
+  ],
+  total: 100,
+  mode: 'hybrid',
+} as const;
+
+/** Per-backend route/shape map so one contract suite can exercise providers
+ * that speak different wire dialects (local daemon vs SaaS REST). */
+export interface ProviderRoutes {
+  recallPath: string;
+  rememberPath: string;
+  recallBody: string;
+}
+
+export const LOCAL_ROUTES: ProviderRoutes = {
+  recallPath: '/recall',
+  rememberPath: '/remember',
+  recallBody: JSON.stringify(MOCK_RECALL_RESPONSE),
+};
+
+export const SAAS_ROUTES: ProviderRoutes = {
+  recallPath: '/memories/search',
+  rememberPath: '/memories',
+  recallBody: JSON.stringify(MOCK_SAAS_SEARCH_RESPONSE),
+};
 
 /** Minimal valid HealthResponse body served by mock. */
 export const MOCK_HEALTH_RESPONSE = {
@@ -62,12 +102,15 @@ export function runProviderContract(
   opts: {
     /** Override the mock response for /ingest/transcript (default: 200 OK {}). */
     ingestResponse?: { status: number; body: string };
-    /** Override the mock response for /recall (default: MOCK_RECALL_RESPONSE). */
+    /** Override the mock response for the recall route (default: routes.recallBody). */
     recallResponse?: { status: number; body: string };
     /** Override the mock response for /health (default: MOCK_HEALTH_RESPONSE). */
     healthResponse?: { status: number; body: string };
+    /** Backend wire dialect the provider under test speaks (default: LOCAL_ROUTES). */
+    routes?: ProviderRoutes;
   } = {},
 ): void {
+  const routes = opts.routes ?? LOCAL_ROUTES;
   describe(`ProviderContract: ${name}`, () => {
 
     // ------------------------------------------------------------------
@@ -95,15 +138,15 @@ export function runProviderContract(
           });
         }
 
-        if (pathname === '/recall') {
-          const { status = 200, body = JSON.stringify(MOCK_RECALL_RESPONSE) } = overrides.recall ?? {};
+        if (pathname === routes.recallPath) {
+          const { status = 200, body = routes.recallBody } = overrides.recall ?? {};
           return new Response(body, {
             status,
             headers: { 'Content-Type': 'application/json' },
           });
         }
 
-        if (pathname === '/remember') {
+        if (pathname === routes.rememberPath) {
           return new Response('{}', {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
