@@ -15,7 +15,8 @@ export interface RememberOpts {
 /**
  * Run the `astramem remember` subcommand.
  *
- * Parses --content, --type, --metadata from args.
+ * Parses --content, --type, --metadata, --project, --agent from args
+ * (--project/--agent fold into metadata for daemon persistence).
  * Calls provider.remember(req).
  * Returns 0 on success, 3 on backend error.
  */
@@ -24,6 +25,8 @@ export async function runRemember(args: string[], opts: RememberOpts = {}): Prom
   let content: string | undefined;
   let type = 'fact';
   let metadata: Record<string, unknown> = {};
+  let project: string | undefined;
+  let agent: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -44,10 +47,24 @@ export async function runRemember(args: string[], opts: RememberOpts = {}): Prom
         }
         i++;
         break;
+      case '--project':
+        project = args[i + 1];
+        i++;
+        break;
+      case '--agent':
+        agent = args[i + 1];
+        i++;
+        break;
       default:
         break;
     }
   }
+
+  // FEAT-423: convenience flags fold into metadata (daemon reads
+  // metadata.project / metadata.agent → persists on the atom). Explicit
+  // --metadata JSON keys win if both are supplied.
+  if (project !== undefined && metadata['project'] === undefined) metadata['project'] = project;
+  if (agent !== undefined && metadata['agent'] === undefined) metadata['agent'] = agent;
 
   if (!content) {
     process.stderr.write('astramem remember: --content <text> is required\n');

@@ -216,12 +216,27 @@ export class LocalProvider implements MemoryProvider {
 
   async recall(req: RecallRequest): Promise<RecallResponse> {
     const headers = await buildHeaders();
+    // FEAT-423: the daemon's POST /recall reads scoping under a nested
+    // `filters` object ({ repo, project, agent }) — NOT top-level. Sending
+    // repo/project/agent flat (the prior shape) made every filter a silent
+    // no-op (issue #56: "any --project value returns everything"). Build the
+    // filters object explicitly and omit it entirely when empty so an
+    // unscoped recall stays byte-identical to before.
+    const filters: Record<string, unknown> = {};
+    if (req.repo !== undefined) filters['repo'] = req.repo;
+    if (req.project !== undefined) filters['project'] = req.project;
+    if (req.agent !== undefined) filters['agent'] = req.agent;
+    const body = {
+      query: req.query,
+      k: req.k,
+      ...(Object.keys(filters).length > 0 ? { filters } : {}),
+    };
     const res = await fetchWithTimeout(
       `${this.baseUrl}/recall`,
       {
         method: 'POST',
         headers,
-        body: JSON.stringify(req),
+        body: JSON.stringify(body),
       },
       5000,
     );

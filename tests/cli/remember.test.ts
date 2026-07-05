@@ -56,6 +56,27 @@ describe('runRemember', () => {
     expect(arg.metadata).toEqual({ priority: 'high' });
   });
 
+  it('folds --project / --agent into metadata (FEAT-423)', async () => {
+    const provider = createMockProvider();
+    await runRemember(
+      ['--content', 'reviewer flagged a null deref', '--type', 'lesson',
+        '--project', 'runner-plugin', '--agent', 'crew:reviewer'],
+      { _provider: provider },
+    );
+    const arg = provider._stubs.remember.mock.calls[0]![0];
+    expect(arg.metadata).toMatchObject({ project: 'runner-plugin', agent: 'crew:reviewer' });
+  });
+
+  it('explicit --metadata keys win over --project / --agent convenience flags', async () => {
+    const provider = createMockProvider();
+    await runRemember(
+      ['--content', 'x', '--metadata', '{"project":"explicit"}', '--project', 'flag-value'],
+      { _provider: provider },
+    );
+    const arg = provider._stubs.remember.mock.calls[0]![0];
+    expect((arg.metadata as Record<string, unknown>).project).toBe('explicit');
+  });
+
   it('returns 3 when --metadata is invalid JSON', async () => {
     const provider = createMockProvider();
     const code = await runRemember(['--content', 'note', '--metadata', '{bad}'], { _provider: provider });

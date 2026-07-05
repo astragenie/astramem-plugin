@@ -45,6 +45,30 @@ describe('runRecall', () => {
     });
   });
 
+  it('passes --agent to provider.recall (FEAT-423)', async () => {
+    const provider = createMockProvider();
+    await runRecall(['--query', 'q', '--agent', 'crew:reviewer'], { _provider: provider });
+    expect(provider._stubs.recall.mock.calls[0]![0]).toMatchObject({ agent: 'crew:reviewer' });
+  });
+
+  it('parses comma-separated --project / --agent into an array (OR filter)', async () => {
+    const provider = createMockProvider();
+    await runRecall(
+      ['--query', 'q', '--project', 'runner-plugin,astramem', '--agent', 'crew:reviewer,crew:builder'],
+      { _provider: provider },
+    );
+    expect(provider._stubs.recall.mock.calls[0]![0]).toMatchObject({
+      project: ['runner-plugin', 'astramem'],
+      agent: ['crew:reviewer', 'crew:builder'],
+    });
+  });
+
+  it('a single --project value stays a string, not a one-element array', async () => {
+    const provider = createMockProvider();
+    await runRecall(['--query', 'q', '--project', 'runner-plugin'], { _provider: provider });
+    expect(provider._stubs.recall.mock.calls[0]![0]).toMatchObject({ project: 'runner-plugin' });
+  });
+
   it('defaults k=5 when --k not provided', async () => {
     const provider = createMockProvider();
     await runRecall(['--query', 'q'], { _provider: provider });
