@@ -82,6 +82,32 @@ describe('SaasProvider — SaaS route + wire mapping (FEAT 4a §4.2.4)', () => {
     });
   });
 
+  it('recall() forwards agent verbatim (FEAT-424) — previously dropped', async () => {
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    await provider.recall({ query: 'q1', k: 7, agent: 'claude-code' });
+    expect(capturedBody).toMatchObject({ agent: 'claude-code' });
+  });
+
+  it('recall() forwards array project/agent verbatim (v0.6.0 multi-value)', async () => {
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    await provider.recall({
+      query: 'q1',
+      k: 7,
+      project: ['proj-a', 'proj-b'],
+      agent: ['claude-code', 'cursor'],
+    });
+    expect(capturedBody).toMatchObject({
+      project_id: ['proj-a', 'proj-b'],
+      agent: ['claude-code', 'cursor'],
+    });
+  });
+
+  it('recall() omits agent key when req.agent is undefined', async () => {
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    await provider.recall(SAMPLE_RECALL);
+    expect(capturedBody).not.toHaveProperty('agent');
+  });
+
   it('recall() maps SaaS SearchResponse to unified RecallResponse', async () => {
     const provider = new SaasProvider(SAAS_MOCK_URL);
     const res = await provider.recall(SAMPLE_RECALL);
