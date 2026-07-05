@@ -12,9 +12,11 @@
  *   - GET  /version            → HealthController
  *
  * Wire mapping (FEAT 4a §4.2.4 — URL fix; shapes mapped in this provider):
- *   - recall():   RecallRequest {query,k,repo,project} → SaaS SearchRequest
- *                 {query, top_k, source, project_id}; SaaS SearchResponse
+ *   - recall():   RecallRequest {query,k,repo,project,agent} → SaaS SearchRequest
+ *                 {query, top_k, source, project_id, agent}; SaaS SearchResponse
  *                 {results,total,mode} → RecallResponse {hits,total_searched,provider}
+ *                 (agent forwarded defensively — SaaS agent-filter support is
+ *                 pending server-side, tracked in astragenie/memory, FEAT-424)
  *   - remember(): IngestPayload {id,type,text,...} → SaaS StoreMemoryRequest
  *                 {content,type,project_id,...}. project_id is REQUIRED by SaaS;
  *                 derived from metadata.project_id → metadata.project → basename(cwd)
@@ -285,12 +287,18 @@ export class SaasProvider implements MemoryProvider {
     // Map unified RecallRequest → SaaS SearchRequest. top_k takes precedence
     // over limit server-side and is capped at 50 there; repo maps to `source`
     // (the SaaS field for originating repo/file) and project to project_id.
+    // project/agent forward string|string[] verbatim (RecallRequest allows
+    // both since v0.6.0) — the SaaS side is expected to accept the same union.
     const body: Record<string, unknown> = {
       query: req.query,
       top_k: req.k,
     };
     if (req.project !== undefined) body['project_id'] = req.project;
     if (req.repo !== undefined) body['source'] = req.repo;
+    // agent was previously dropped here (FEAT-424) — SaaS agent-filter support
+    // is pending server-side (astragenie/memory); forwarded defensively so the
+    // plugin is ready the moment the SaaS API accepts it.
+    if (req.agent !== undefined) body['agent'] = req.agent;
 
     const res = await fetchWithTimeout(
       `${this.baseUrl}/memories/search`,
