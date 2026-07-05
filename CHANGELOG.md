@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.0] — 2026-07-05
+
+Project- and agent-scoped recall (astramem-local FEAT-423 / issue #56).
+
+### Fixed
+- **`recall` scoping was a silent no-op.** `LocalProvider.recall()` POSTed `repo`/`project` at the **top level**, but the daemon reads scoping under a nested `filters` object — so every `--repo`/`--project` value returned the full result set (astramem-local#56). Now builds `{ query, k, filters: { repo, project, agent } }`; an unscoped recall still omits `filters` entirely (byte-identical to before).
+
+### Added
+- **`astramem recall --agent <name>`** — filter by provenance agent/agent_type.
+- **Comma-separated `--project` / `--agent`** on `recall` → array (OR-semantics), e.g. `--project runner-plugin,astramem`.
+- **`astramem remember --project / --agent`** convenience flags — fold into `metadata` (explicit `--metadata` JSON keys win) so the atom is later recallable under those filters.
+- **`RecallRequestSchema`** gains `agent` and array support on `project`/`agent` (`src/contracts/wire.ts`).
+
+### Notes
+- SaaS provider still maps `project → project_id` and does **not** forward `agent` — cross-provider parity tracked in astramem-local FEAT-424.
+- Requires daemon astramem-local ≥ 0.7.0 for `agent` + multi-value (project filtering works against any version that honors `filters`).
+
 ## [0.5.0] — 2026-06-30
 
 Closes out FEAT-4a Phase 3 (plugin wire-contract unification, Path 3a-saas). Daemon `astramemory-local` v0.2.0 ships in lockstep; SaaS backend `memory` PR #530 lands the canonical envelope.

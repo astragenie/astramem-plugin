@@ -84,6 +84,54 @@ describe('LocalProvider — bearer from MEMORY_BEARER env', () => {
   });
 });
 
+describe('LocalProvider — recall body shape (FEAT-423)', () => {
+  let origFetch: typeof globalThis.fetch;
+  let capturedBody: Record<string, unknown> | undefined;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    capturedBody = undefined;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (new URL(url).pathname === '/recall' && init?.body) {
+        capturedBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      }
+      return new Response(
+        JSON.stringify({ hits: [], total_searched: 0, provider: 'local' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
+  });
+
+  afterEach(() => { globalThis.fetch = origFetch; });
+
+  it('nests repo/project/agent under a `filters` object — not flat (issue #56 no-op fix)', async () => {
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.recall({ query: 'q', k: 5, repo: 'r1', project: 'runner-plugin', agent: 'crew:reviewer' });
+    expect(capturedBody).toEqual({
+      query: 'q',
+      k: 5,
+      filters: { repo: 'r1', project: 'runner-plugin', agent: 'crew:reviewer' },
+    });
+    // Guard against regression: scoping must NOT appear at the top level.
+    expect(capturedBody).not.toHaveProperty('project');
+    expect(capturedBody).not.toHaveProperty('agent');
+  });
+
+  it('omits `filters` entirely for an unscoped recall (byte-identical to legacy body)', async () => {
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.recall({ query: 'q', k: 5 });
+    expect(capturedBody).toEqual({ query: 'q', k: 5 });
+    expect(capturedBody).not.toHaveProperty('filters');
+  });
+
+  it('forwards array project/agent (OR filter) verbatim inside filters', async () => {
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.recall({ query: 'q', k: 5, project: ['a', 'b'], agent: ['x', 'y'] });
+    expect(capturedBody).toMatchObject({ filters: { project: ['a', 'b'], agent: ['x', 'y'] } });
+  });
+});
+
 describe('LocalProvider — default URL resolution', () => {
   let origFetch: typeof globalThis.fetch;
   let capturedUrl: string | undefined;

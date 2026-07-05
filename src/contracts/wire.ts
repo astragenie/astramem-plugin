@@ -45,8 +45,12 @@ export const RecallRequestSchema = z.object({
   k: z.number().int().min(1).max(100).default(5),
   /** Optional: filter by repo name. */
   repo: z.string().optional(),
-  /** Optional: filter by project/workspace. */
-  project: z.string().optional(),
+  /** Optional: filter by project/workspace. Single value or a list (OR).
+   *  Local daemon exact-matches `provenance.project` (FEAT-423). */
+  project: z.union([z.string(), z.array(z.string())]).optional(),
+  /** Optional: filter by provenance agent/agent_type. Single value or a list
+   *  (OR). Local daemon exact-matches `provenance.agent` (FEAT-423). */
+  agent: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 export type RecallRequest = z.infer<typeof RecallRequestSchema>;

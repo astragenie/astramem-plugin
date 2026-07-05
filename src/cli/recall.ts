@@ -15,17 +15,28 @@ export interface RecallOpts {
 /**
  * Run the `astramem recall` subcommand.
  *
- * Parses --query, --k, --repo, --project from args.
+ * Parses --query, --k, --repo, --project, --agent from args
+ * (--project/--agent accept comma-separated lists → OR filter).
  * Calls provider.recall(req) with a 5s timeout.
  * Prints normalized RecallResponse JSON to stdout.
  * Returns 0 on success, 3 on backend error.
  */
+/** FEAT-423: a `--project a,b` / `--agent x,y` value is a list (OR); a single
+ *  value stays a string. Empty/whitespace segments dropped. */
+function csvArg(raw: string | undefined): string | string[] | undefined {
+  if (raw === undefined) return undefined;
+  const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  return parts.length === 1 ? parts[0] : parts;
+}
+
 export async function runRecall(args: string[], opts: RecallOpts = {}): Promise<number> {
   // Parse args
   let query: string | undefined;
   let k = 5;
   let repo: string | undefined;
-  let project: string | undefined;
+  let project: string | string[] | undefined;
+  let agent: string | string[] | undefined;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -42,7 +53,11 @@ export async function runRecall(args: string[], opts: RecallOpts = {}): Promise<
         i++;
         break;
       case '--project':
-        project = args[i + 1];
+        project = csvArg(args[i + 1]);
+        i++;
+        break;
+      case '--agent':
+        agent = csvArg(args[i + 1]);
         i++;
         break;
       default:
@@ -55,7 +70,7 @@ export async function runRecall(args: string[], opts: RecallOpts = {}): Promise<
     return 3;
   }
 
-  const reqParsed = RecallRequestSchema.safeParse({ query, k, repo, project });
+  const reqParsed = RecallRequestSchema.safeParse({ query, k, repo, project, agent });
   if (!reqParsed.success) {
     process.stderr.write(`astramem recall: invalid arguments — ${reqParsed.error.message}\n`);
     return 3;
