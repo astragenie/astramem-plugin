@@ -3,6 +3,13 @@
   "version": "0.6.0",
   "description": "AstraMemory Claude Code plugin: provider selector + hooks + CLI. Bun-native TypeScript. Targets local or SaaS AstraMemory backends.",
   "type": "module",
+  "main": "./src/contracts/index.ts",
+  "exports": {
+    ".": "./src/contracts/index.ts",
+    "./providers/local": "./src/providers/local.ts",
+    "./providers/saas": "./src/providers/saas.ts",
+    "./contracts": "./src/contracts/index.ts"
+  },
   "bin": {
     "memory-login": "./bin/memory-login.ts",
     "memory-refresh": "./bin/memory-refresh.ts",
