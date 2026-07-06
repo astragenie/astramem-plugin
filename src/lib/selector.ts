@@ -12,6 +12,13 @@
  *
  * Provider implementations are loaded via lazy dynamic import so this file
  * can be written before Track A's src/providers/*.ts files exist.
+ *
+ * Every resolution branch above also runs a startup wire-version
+ * compatibility probe (FEAT 4a backlog M1 — see enforceWireCompat() /
+ * src/lib/wire-probe.ts) against the resolved backend's GET /version before
+ * returning. A genuine domain-generation mismatch throws
+ * WireIncompatibilityError; an unreachable or pre-contract ("legacy")
+ * backend only warns to stderr and resolution proceeds.
  */
 import type { SelectorResult } from '../contracts/selector.ts';
 import type { Provider } from '../contracts/selector.ts';
@@ -20,6 +27,12 @@ import { loadConfig } from './config.ts';
 import { resolveEnv } from './env.ts';
 import { ENV } from './env-specs.ts';
 import { resolveLocalUrl } from './local-url.ts';
+import {
+  checkWireCompat,
+  assertWireCompatible,
+  WireIncompatibilityError,
+  type WireCompatResult,
+} from './wire-probe.ts';
 
 /** Options for resolveProvider. */
 export interface ResolvableOpts {
@@ -68,6 +81,97 @@ export function _setHealthProbeFn(
 }
 
 // ---------------------------------------------------------------------------
+// Startup wire-version compatibility probe (FEAT 4a backlog M1).
+//
+// Runs once per resolved provider (real network call in production, gated
+// behind a test-safe default in NODE_ENV=test — see below). A genuine
+// incompatibility (WireIncompatibilityError) propagates out of
+// resolveProvider() so every caller's existing "selector error" handling
+// surfaces it loudly (stderr + non-zero exit for health/recall/remember; the
+// ingest-transcript fire-and-forget path logs it to the ingest log, which is
+// that command's existing, documented failure channel for selector errors).
+// 'legacy' / 'unreachable' probe outcomes are NOT failures — they warn to
+// stderr and resolution proceeds, per the "tolerate missing fields" contract.
+// ---------------------------------------------------------------------------
+
+type WireCompatFn = (name: Provider, baseUrl: string) => Promise<WireCompatResult>;
+
+/**
+ * Test-safe default. Vitest sets NODE_ENV=test; defaulting to an
+ * always-compatible stub there means the pre-existing precedence-matrix
+ * tests (which predate this probe) keep passing without every one of them
+ * injecting a stub. Tests that specifically exercise wire-compat behavior
+ * call _setWireCompatFn() to override this default.
+ */
+function testSafeDefaultWireCompatFn(): WireCompatFn {
+  return async (name, baseUrl) => ({ status: 'compatible', providerName: name, baseUrl });
+}
+
+let _wireCompatFn: WireCompatFn =
+  process.env['NODE_ENV'] === 'test' ? testSafeDefaultWireCompatFn() : checkWireCompat;
+
+/**
+ * Override the wire-compat probe function (e.g. to force 'incompatible' in
+ * tests). TEST-ONLY — no-op outside NODE_ENV=test. Do not call in production code.
+ */
+export function _setWireCompatFn(fn: WireCompatFn): void {
+  if (process.env['NODE_ENV'] !== 'test') return;
+  _wireCompatFn = fn;
+}
+
+/**
+ * Restore the wire-compat probe function to its (test-safe) default.
+ * TEST-ONLY — no-op outside NODE_ENV=test.
+ */
+export function _resetWireCompatFn(): void {
+  if (process.env['NODE_ENV'] !== 'test') return;
+  _wireCompatFn = testSafeDefaultWireCompatFn();
+}
+
+/** Resolve the base URL a given provider name actually targets, mirroring
+ * the same helpers resolveAuto() already uses for its /health probe (local:
+ * resolveLocalUrl(); saas: env-only, matching SaasProvider's own resolution —
+ * see src/providers/saas.ts resolveBaseUrl()). Returns undefined when the
+ * SaaS URL isn't configured; the provider construction path already surfaces
+ * that failure on its own, so the probe just skips rather than double-erroring. */
+function resolveBaseUrlForProbe(name: Provider): string | undefined {
+  if (name === 'local') return resolveLocalUrl();
+  return resolveEnv(ENV.apiUrlSaas).value?.replace(/\/$/, '');
+}
+
+async function enforceWireCompat(name: Provider): Promise<void> {
+  const baseUrl = resolveBaseUrlForProbe(name);
+  if (!baseUrl) return;
+
+  let result: WireCompatResult;
+  try {
+    result = await _wireCompatFn(name, baseUrl);
+    // Belt-and-suspenders: enforce here too, in case the active _wireCompatFn
+    // (e.g. an injected test stub, or a future alternate implementation)
+    // returns an 'incompatible' status object instead of throwing itself —
+    // checkWireCompat()'s own inline probe+throw already covers the
+    // production default, but resolution must fail loudly either way.
+    assertWireCompatible(result);
+  } catch (err: unknown) {
+    if (err instanceof WireIncompatibilityError) throw err;
+    // Any other probe failure must never block provider resolution.
+    process.stderr.write(
+      `astramem: wire-compat probe error for ${name} @ ${baseUrl} — ` +
+        `${(err as Error)?.message ?? String(err)}\n`,
+    );
+    return;
+  }
+
+  if (result.status === 'legacy' || result.status === 'unreachable') {
+    process.stderr.write(
+      `astramem: WARNING — could not confirm wire-version compatibility with ${name} ` +
+        `backend at ${baseUrl} (${result.status}${result.error ? `: ${result.error}` : ''}). ` +
+        `Proceeding — treat this backend as unverified.\n`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 
@@ -79,6 +183,7 @@ export async function resolveProvider(opts: ResolvableOpts = {}): Promise<Select
   // 1. Explicit flag.
   if (opts.flag) {
     const provider = await loadProvider(opts.flag);
+    await enforceWireCompat(opts.flag);
     return { provider, providerName: opts.flag, source: 'flag' };
   }
 
@@ -87,6 +192,7 @@ export async function resolveProvider(opts: ResolvableOpts = {}): Promise<Select
   if (envVal && isValidProvider(envVal)) {
     const name = envVal as Provider;
     const provider = await loadProvider(name);
+    await enforceWireCompat(name);
     return { provider, providerName: name, source: 'env' };
   }
 
@@ -102,6 +208,7 @@ export async function resolveProvider(opts: ResolvableOpts = {}): Promise<Select
   if (configProvider !== 'auto' && isValidProvider(configProvider)) {
     const name = configProvider as Provider;
     const provider = await loadProvider(name);
+    await enforceWireCompat(name);
     return { provider, providerName: name, source: 'config' };
   }
 
@@ -121,6 +228,7 @@ async function resolveAuto(): Promise<SelectorResult> {
 
   if (probe.ok) {
     const provider = await loadProvider('local');
+    await enforceWireCompat('local');
     return {
       provider,
       providerName: 'local',
@@ -145,6 +253,7 @@ async function resolveAuto(): Promise<SelectorResult> {
 
   // Fallback to saas (user has explicitly configured SaaS).
   const provider = await loadProvider('saas');
+  await enforceWireCompat('saas');
   return { provider, providerName: 'saas', source: 'fallback' };
 }
 
