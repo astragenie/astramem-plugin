@@ -10,6 +10,7 @@ import type { TranscriptIngestPayload, TranscriptTurn } from '../contracts/wire.
 import { scrubWithLabels, SCRUB_VERSION } from '../lib/scrub.ts';
 import { appendIngestLog } from '../lib/log.ts';
 import { resolveProvider } from '../lib/selector.ts';
+import { resolveProject } from '../lib/project.ts';
 import { enqueue, drain, capEnforce } from '../lib/pending.ts';
 import { TransientError } from '../lib/errors.ts';
 import type { Provider } from '../contracts/selector.ts';
@@ -260,12 +261,18 @@ export async function runIngestTranscript(
     return 0;
   }
 
-  // --session-id and --project-id are required for a meaningful envelope.
-  // But per fire-and-forget: log and exit 0 rather than hard-fail.
-  if (!args.sessionId || !args.projectId) {
-    appendIngestLog('ingest-transcript: --session-id and --project-id are required; skipping');
+  // --session-id is required for a meaningful envelope. But per
+  // fire-and-forget: log and exit 0 rather than hard-fail.
+  if (!args.sessionId) {
+    appendIngestLog('ingest-transcript: --session-id is required; skipping');
     return 0;
   }
+
+  // issue #33: default --project-id via resolveProject() (flag > ASTRAMEM_PROJECT
+  // env > config.project > basename(--cwd)) when the caller (a hook shim) didn't
+  // pass one explicitly — this is the highest-frequency writer, so it's the call
+  // site most likely to drift from the CLI/hook default if missed.
+  const projectId = args.projectId ?? resolveProject({ cwd: args.cwd });
 
   // Normalize path: resolve() canonicalises separators, drive-letter case, and
   // removes doubled backslashes that Claude Code may produce on Windows.
@@ -357,7 +364,7 @@ export async function runIngestTranscript(
     wire_version: WIRE_VERSION,
     event: args.event as 'pre_compact' | 'session_end' | 'subagent_stop',
     session_id: args.sessionId,
-    project_id: args.projectId,
+    project_id: projectId,
     captured_at: new Date().toISOString(),
     turns: scrubbedTurns,
     client_scrub_applied: true,

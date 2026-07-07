@@ -274,6 +274,32 @@ describe('runIngestTranscript', () => {
     expect(envelope.captured_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
+  it('defaults project_id via resolveProject() from --cwd when --project-id is omitted (issue #33)', async () => {
+    const filePath = writeTranscript([{ role: 'user', text: 'hi' }]);
+    const provider = createMockProvider();
+    const code = await runIngestTranscript(
+      ['--event', 'pre_compact', '--transcript-path', filePath, '--session-id', 'sid',
+       '--cwd', '/home/user/projects/my-app'],
+      { _provider: provider },
+    );
+    expect(code).toBe(0);
+    const envelope = provider._stubs.ingestTranscript.mock.calls[0]![0] as TranscriptIngestPayload;
+    expect(envelope.project_id).toBe('my-app');
+  });
+
+  it('an explicit --project-id still wins over the resolveProject default (issue #33)', async () => {
+    const filePath = writeTranscript([{ role: 'user', text: 'hi' }]);
+    const provider = createMockProvider();
+    const code = await runIngestTranscript(
+      ['--event', 'pre_compact', '--transcript-path', filePath, '--session-id', 'sid',
+       '--project-id', 'explicit-proj', '--cwd', '/home/user/projects/my-app'],
+      { _provider: provider },
+    );
+    expect(code).toBe(0);
+    const envelope = provider._stubs.ingestTranscript.mock.calls[0]![0] as TranscriptIngestPayload;
+    expect(envelope.project_id).toBe('explicit-proj');
+  });
+
   it('passes --agent-type and --cwd into envelope', async () => {
     const filePath = writeTranscript([{ role: 'user', text: 'hi' }]);
     const provider = createMockProvider();
