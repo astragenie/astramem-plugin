@@ -1,5 +1,18 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-start-recall.sh\"",
+            "timeout": 15,
+            "statusMessage": "Recalling project memories from astramem...",
+            "description": "memory: inject project-scoped memories as session context (issue #31)"
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [

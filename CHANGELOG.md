@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.1] — 2026-07-07
+
+Read-side session context (issue #31).
+
+### Added
+- **`SessionStart` recall hook** (`hooks/scripts/session-start-recall.sh`) — the read-side counterpart to the three capture hooks. Derives the project from `basename(cwd)` (same rule as the capture shims), runs `astramem recall --project <project> --k 8`, and injects the top hits as `hookSpecificOutput.additionalContext` with a "background memory, verify before acting" preamble. Every session now opens with what the store already knows about the project.
+- Env knobs: `MEMORY_SESSIONSTART_RECALL_DISABLE=1` (skip), `MEMORY_SESSIONSTART_RECALL_K` (default 8), `MEMORY_SESSIONSTART_RECALL_QUERY` (query override), `MEMORY_SESSIONSTART_MAX_ATOM_CHARS` (default 300). `ASTRAMEM_HOOK_DEBUG=1` supported like the other shims.
+
+### Notes
+- Fire-and-forget contract, with a twist: on success the hook PRINTS one JSON object; on any failure (daemon down, zero hits, jq error, disabled) it prints NOTHING and exits 0 — partial stdout would be injected into the session as garbled context, so the failure contract is stricter than the capture shims'.
+- Recall quality depends on the daemon-side distiller durability gate (astramemory-local FEAT-441 / memory#659) — low-signal atoms currently dilute the injected context; improves automatically as the gate lands.
+
 ## [0.6.0] — 2026-07-05
 
 Project- and agent-scoped recall (astramem-local FEAT-423 / issue #56).
