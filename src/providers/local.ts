@@ -33,6 +33,7 @@ import { readLocalBearer } from '../lib/secrets.ts';
 import { resolveEnv } from '../lib/env.ts';
 import { ENV } from '../lib/env-specs.ts';
 import { scrubWithLabels } from '../lib/scrub.ts';
+import { unrefTimer, linkSignals } from '../lib/abort.ts';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -51,24 +52,37 @@ function resolveBaseUrl(): string {
 /**
  * Fetch with an AbortController timeout. Throws TransientError on network
  * failures and timeout; throws DeterministicError on 4xx.
+ *
+ * The internal deadline timer is unref()'d (issue #29) so an abandoned fetch
+ * left running after a caller's own shorter deadline fires cannot keep the
+ * event loop alive on its own. An optional externalSignal is combined with
+ * the internal deadline — whichever aborts first wins, and the error message
+ * distinguishes a caller-initiated abort from an internal timeout.
  */
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
+  externalSignal?: AbortSignal,
 ): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  unrefTimer(timer);
+  const { signal: combinedSignal, dispose } = linkSignals([ctrl.signal, externalSignal]);
   try {
-    const res = await fetch(url, { ...init, signal: ctrl.signal });
+    const res = await fetch(url, { ...init, signal: combinedSignal });
     return res;
   } catch (err: unknown) {
     if ((err as Error)?.name === 'AbortError') {
+      if (externalSignal?.aborted) {
+        throw new TransientError('Request aborted by caller signal', undefined, err);
+      }
       throw new TransientError(`Request timed out after ${timeoutMs}ms`, undefined, err);
     }
     throw new TransientError(`Network error: ${(err as Error)?.message ?? String(err)}`, undefined, err);
   } finally {
     clearTimeout(timer);
+    dispose();
   }
 }
 
@@ -119,7 +133,7 @@ export class LocalProvider implements MemoryProvider {
    * Fire-and-forget ingest.  Retries once on TransientError within the 2s budget.
    * Never propagates errors — caller is insulated per the contract.
    */
-  async ingest(payload: IngestPayload): Promise<void> {
+  async ingest(payload: IngestPayload, signal?: AbortSignal): Promise<void> {
     const attemptIngest = async (): Promise<void> => {
       const headers = await buildHeaders();
       const res = await fetchWithTimeout(
@@ -130,6 +144,7 @@ export class LocalProvider implements MemoryProvider {
           body: JSON.stringify(payload),
         },
         2000,
+        signal,
       );
       await assertOk(res, 'ingest');
     };
@@ -138,6 +153,10 @@ export class LocalProvider implements MemoryProvider {
       await attemptIngest();
     } catch (err: unknown) {
       if (err instanceof TransientError) {
+        // Caller already gave up (issue #29 review finding #2) — a retry
+        // would just burn another network round-trip nobody is waiting on.
+        // Fire-and-forget: resolve without a second attempt.
+        if (signal?.aborted) return;
         // Retry once on transient failure.
         try {
           await attemptIngest();
@@ -160,7 +179,7 @@ export class LocalProvider implements MemoryProvider {
    * Retries once on TransientError within the 2s budget.
    * Never propagates errors — caller is insulated per fire-and-forget contract.
    */
-  async ingestTranscript(payload: TranscriptIngestPayload): Promise<void> {
+  async ingestTranscript(payload: TranscriptIngestPayload, signal?: AbortSignal): Promise<void> {
     // Defense-in-depth scrub: run scrubWithLabels on each turn's text before
     // sending to the wire. CLI callers already scrubbed (idempotent). Programmatic
     // callers (MCP, SDK) that skipped the CLI layer get scrub here.
@@ -194,6 +213,7 @@ export class LocalProvider implements MemoryProvider {
           body: JSON.stringify(scrubbedPayload),
         },
         2000,
+        signal,
       );
       await assertOk(res, 'ingest/transcript');
     };
@@ -202,6 +222,10 @@ export class LocalProvider implements MemoryProvider {
       await attemptIngestTranscript();
     } catch (err: unknown) {
       if (err instanceof TransientError) {
+        // Caller already gave up (issue #29 review finding #2) — skip the
+        // retry rather than firing another network round-trip nobody is
+        // waiting on. Fire-and-forget: resolve without a second attempt.
+        if (signal?.aborted) return;
         // Retry once on transient failure.
         try {
           await attemptIngestTranscript();
@@ -214,7 +238,7 @@ export class LocalProvider implements MemoryProvider {
     }
   }
 
-  async recall(req: RecallRequest): Promise<RecallResponse> {
+  async recall(req: RecallRequest, signal?: AbortSignal): Promise<RecallResponse> {
     const headers = await buildHeaders();
     // FEAT-423: the daemon's POST /recall reads scoping under a nested
     // `filters` object ({ repo, project, agent }) — NOT top-level. Sending
@@ -239,13 +263,14 @@ export class LocalProvider implements MemoryProvider {
         body: JSON.stringify(body),
       },
       5000,
+      signal,
     );
     await assertOk(res, 'recall');
     const json: unknown = await res.json();
     return RecallResponseSchema.parse(json);
   }
 
-  async remember(req: IngestPayload): Promise<void> {
+  async remember(req: IngestPayload, signal?: AbortSignal): Promise<void> {
     const headers = await buildHeaders();
     const res = await fetchWithTimeout(
       `${this.baseUrl}/remember`,
@@ -255,17 +280,19 @@ export class LocalProvider implements MemoryProvider {
         body: JSON.stringify(req),
       },
       5000,
+      signal,
     );
     await assertOk(res, 'remember');
   }
 
-  async health(): Promise<HealthResponse> {
+  async health(signal?: AbortSignal): Promise<HealthResponse> {
     const t0 = Date.now();
     const headers = await buildHeaders();
     const res = await fetchWithTimeout(
       `${this.baseUrl}/health`,
       { method: 'GET', headers },
       3000,
+      signal,
     );
     const latencyMs = Date.now() - t0;
     await assertOk(res, 'health');

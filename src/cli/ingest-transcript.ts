@@ -20,7 +20,7 @@ import type { Provider } from '../contracts/selector.ts';
 // ---------------------------------------------------------------------------
 
 export interface TranscriptProvider {
-  ingestTranscript(payload: TranscriptIngestPayload): Promise<void>;
+  ingestTranscript(payload: TranscriptIngestPayload, signal?: AbortSignal): Promise<void>;
 }
 
 export interface IngestTranscriptOpts {

@@ -53,6 +53,7 @@ import { readAuth } from '../../lib/clerkAuthFile.ts';
 import { resolveEnv } from '../lib/env.ts';
 import { ENV } from '../lib/env-specs.ts';
 import { scrubWithLabels } from '../lib/scrub.ts';
+import { unrefTimer, linkSignals } from '../lib/abort.ts';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -70,23 +71,37 @@ function resolveBaseUrl(): string {
 // Fetch helpers (parallel to local.ts — no shared dependency per Track A scope)
 // ---------------------------------------------------------------------------
 
+/**
+ * The internal deadline timer is unref()'d (issue #29) so an abandoned fetch
+ * left running after a caller's own shorter deadline fires cannot keep the
+ * event loop alive on its own. An optional externalSignal is combined with
+ * the internal deadline — whichever aborts first wins, and the error message
+ * distinguishes a caller-initiated abort from an internal timeout.
+ */
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
+  externalSignal?: AbortSignal,
 ): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  unrefTimer(timer);
+  const { signal: combinedSignal, dispose } = linkSignals([ctrl.signal, externalSignal]);
   try {
-    const res = await fetch(url, { ...init, signal: ctrl.signal });
+    const res = await fetch(url, { ...init, signal: combinedSignal });
     return res;
   } catch (err: unknown) {
     if ((err as Error)?.name === 'AbortError') {
+      if (externalSignal?.aborted) {
+        throw new TransientError('Request aborted by caller signal', undefined, err);
+      }
       throw new TransientError(`Request timed out after ${timeoutMs}ms`, undefined, err);
     }
     throw new TransientError(`Network error: ${(err as Error)?.message ?? String(err)}`, undefined, err);
   } finally {
     clearTimeout(timer);
+    dispose();
   }
 }
 
@@ -183,7 +198,7 @@ export class SaasProvider implements MemoryProvider {
     this.baseUrl = (baseUrl ?? resolveBaseUrl()).replace(/\/$/, '');
   }
 
-  async ingest(payload: IngestPayload): Promise<void> {
+  async ingest(payload: IngestPayload, signal?: AbortSignal): Promise<void> {
     const attemptIngest = async (): Promise<void> => {
       const headers = await buildHeaders();
       const res = await fetchWithTimeout(
@@ -194,6 +209,7 @@ export class SaasProvider implements MemoryProvider {
           body: JSON.stringify(payload),
         },
         2000,
+        signal,
       );
       await assertOk(res, 'ingest');
     };
@@ -202,6 +218,10 @@ export class SaasProvider implements MemoryProvider {
       await attemptIngest();
     } catch (err: unknown) {
       if (err instanceof TransientError) {
+        // Caller already gave up (issue #29 review finding #2) — skip the
+        // retry rather than firing another network round-trip nobody is
+        // waiting on. Fire-and-forget: resolve without a second attempt.
+        if (signal?.aborted) return;
         try {
           await attemptIngest();
         } catch {
@@ -227,7 +247,7 @@ export class SaasProvider implements MemoryProvider {
    * the payload themselves (e.g. ingest-transcript CLI) already set
    * wire_version: WIRE_VERSION. The provider backfills defensively.
    */
-  async ingestTranscript(payload: TranscriptIngestPayload): Promise<void> {
+  async ingestTranscript(payload: TranscriptIngestPayload, signal?: AbortSignal): Promise<void> {
     // Defense-in-depth scrub: run scrubWithLabels on each turn's text before
     // sending to the wire. CLI callers already scrubbed (idempotent). Programmatic
     // callers (MCP, SDK) that skipped the CLI layer get scrub here.
@@ -263,6 +283,7 @@ export class SaasProvider implements MemoryProvider {
           body: JSON.stringify(body),
         },
         2000,
+        signal,
       );
       await assertOk(res, 'ingest/transcript');
     };
@@ -271,6 +292,10 @@ export class SaasProvider implements MemoryProvider {
       await attemptIngestTranscript();
     } catch (err: unknown) {
       if (err instanceof TransientError) {
+        // Caller already gave up (issue #29 review finding #2) — skip the
+        // retry rather than firing another network round-trip nobody is
+        // waiting on. Fire-and-forget: resolve without a second attempt.
+        if (signal?.aborted) return;
         try {
           await attemptIngestTranscript();
         } catch {
@@ -282,7 +307,7 @@ export class SaasProvider implements MemoryProvider {
     }
   }
 
-  async recall(req: RecallRequest): Promise<RecallResponse> {
+  async recall(req: RecallRequest, signal?: AbortSignal): Promise<RecallResponse> {
     const headers = await buildHeaders();
     // Map unified RecallRequest → SaaS SearchRequest. top_k takes precedence
     // over limit server-side and is capped at 50 there; repo maps to `source`
@@ -308,6 +333,7 @@ export class SaasProvider implements MemoryProvider {
         body: JSON.stringify(body),
       },
       5000,
+      signal,
     );
     await assertOk(res, 'recall');
     const json: unknown = await res.json();
@@ -329,7 +355,7 @@ export class SaasProvider implements MemoryProvider {
     return RecallResponseSchema.parse(mapped);
   }
 
-  async remember(req: IngestPayload): Promise<void> {
+  async remember(req: IngestPayload, signal?: AbortSignal): Promise<void> {
     const headers = await buildHeaders();
     // Map unified IngestPayload → SaaS StoreMemoryRequest. project_id is
     // required by the SaaS API; the plugin-side payload id is preserved as
@@ -352,17 +378,19 @@ export class SaasProvider implements MemoryProvider {
         body: JSON.stringify(body),
       },
       5000,
+      signal,
     );
     await assertOk(res, 'remember');
   }
 
-  async health(): Promise<HealthResponse> {
+  async health(signal?: AbortSignal): Promise<HealthResponse> {
     const t0 = Date.now();
     const headers = await buildHeaders();
     const res = await fetchWithTimeout(
       `${this.baseUrl}/health`,
       { method: 'GET', headers },
       3000,
+      signal,
     );
     const latencyMs = Date.now() - t0;
     await assertOk(res, 'health');
