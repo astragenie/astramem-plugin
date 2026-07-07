@@ -5,6 +5,7 @@
     "": {
       "name": "@astragenie/astramem-plugin",
       "dependencies": {
+        "@astragenie/astramem-contracts": "1.1.0",
         "zod": "^3.23.0",
       },
       "devDependencies": {
@@ -16,6 +17,8 @@
     },
   },
   "packages": {
+    "@astragenie/astramem-contracts": ["@astragenie/astramem-contracts@1.1.0", "https://npm.pkg.github.com/download/@astragenie/astramem-contracts/1.1.0/1123207417932c0f4114773300e129a1c696dcbf", { "peerDependencies": { "zod": "^4.4.3" } }, "sha512-PjqOuLy7xQc6I//DFkKVF+fFa52m56ys5XmZ9lad2gIfF1T2A1VYfTLiXvOp2reNddDyLD72yzxWYfbrw9aygw=="],
+
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.21.5", "", { "os": "aix", "cpu": "ppc64" }, "sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ=="],
 
     "@esbuild/android-arm": ["@esbuild/android-arm@0.21.5", "", { "os": "android", "cpu": "arm" }, "sha512-vCPvzSjpPHEi1siZdlvAlsPxXl7WbOVUBBAowWug4rJHb68Ox8KualB+1ocNvT5fjv6wpkX6o/iEpbDrf68zcg=="],

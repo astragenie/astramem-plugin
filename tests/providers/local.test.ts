@@ -41,6 +41,17 @@ runProviderContract('LocalProvider', (baseUrl) => new LocalProvider(baseUrl));
 // Local-specific tests
 // ---------------------------------------------------------------------------
 
+describe('LocalProvider — capabilities (#26)', () => {
+  it('reports single-tenant, no as_of, no explain signals', () => {
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    expect(provider.capabilities).toEqual({
+      tenancy: 'single',
+      asOf: false,
+      explainSignals: [],
+    });
+  });
+});
+
 describe('LocalProvider — bearer from MEMORY_BEARER env', () => {
   let origFetch: typeof globalThis.fetch;
   let capturedAuthHeader: string | undefined;

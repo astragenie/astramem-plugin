@@ -115,7 +115,7 @@ describe('SaasProvider — SaaS route + wire mapping (FEAT 4a §4.2.4)', () => {
     expect(res.total_searched).toBe(100);
     expect(res.hits[0]).toMatchObject({
       id: '00000000-0000-0000-0000-000000000001',
-      type: 'transcript',
+      type: 'note',
       text: 'relevant memory',
       score: 0.91,
     });
@@ -146,6 +146,21 @@ describe('SaasProvider — SaaS route + wire mapping (FEAT 4a §4.2.4)', () => {
     });
     expect(capturedBody?.['project_id']).toBe('explicit-proj');
     expect((capturedBody?.['metadata'] as Record<string, unknown>)['client_id']).toBe(SAMPLE_INGEST.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// capabilities (#26)
+// ---------------------------------------------------------------------------
+
+describe('SaasProvider — capabilities (#26)', () => {
+  it('reports multi-tenant, no as_of, no explain signals', () => {
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    expect(provider.capabilities).toEqual({
+      tenancy: 'multi',
+      asOf: false,
+      explainSignals: [],
+    });
   });
 });
 
