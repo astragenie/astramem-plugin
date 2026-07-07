@@ -15,10 +15,13 @@ import type { MemoryProvider } from '../../src/contracts/provider.ts';
 import { RecallResponseSchema } from '../../src/contracts/wire.ts';
 import { DeterministicError, TransientError } from '../../src/lib/errors.ts';
 
-/** Minimal valid IngestPayload for contract tests. */
+/** Minimal valid IngestPayload for contract tests.
+ * `type` must be a canonical MemoryType value (#27) — 'note' stands in for
+ * the free-form 'transcript' placeholder this fixture used before the
+ * canonical memory-type union was adopted. */
 export const SAMPLE_INGEST = {
   id: 'contract-test-id',
-  type: 'transcript',
+  type: 'note',
   text: 'Hello from the contract test.',
 } as const;
 
@@ -33,7 +36,7 @@ export const MOCK_RECALL_RESPONSE = {
   hits: [
     {
       id: 'hit-1',
-      type: 'transcript',
+      type: 'note',
       text: 'relevant memory',
       score: 0.91,
     },
@@ -47,7 +50,7 @@ export const MOCK_SAAS_SEARCH_RESPONSE = {
   results: [
     {
       id: '00000000-0000-0000-0000-000000000001',
-      type: 'transcript',
+      type: 'note',
       scope: 'private',
       content: 'relevant memory',
       importance: 0.5,
@@ -112,6 +115,17 @@ export function runProviderContract(
 ): void {
   const routes = opts.routes ?? LOCAL_ROUTES;
   describe(`ProviderContract: ${name}`, () => {
+
+    // ------------------------------------------------------------------
+    // capabilities (#26)
+    // ------------------------------------------------------------------
+
+    it('exposes a well-formed capabilities object', () => {
+      const provider = makeProvider('http://127.0.0.1:19999');
+      expect(['single', 'multi']).toContain(provider.capabilities.tenancy);
+      expect(typeof provider.capabilities.asOf).toBe('boolean');
+      expect(Array.isArray(provider.capabilities.explainSignals)).toBe(true);
+    });
 
     // ------------------------------------------------------------------
     // Helpers

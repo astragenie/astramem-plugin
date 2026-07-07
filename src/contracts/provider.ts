@@ -2,7 +2,44 @@
 // Input/output types are Zod-inferred from wire.ts.
 import type { IngestPayload, RecallRequest, RecallResponse, HealthResponse, TranscriptIngestPayload } from './wire.ts';
 
+/**
+ * Backend capability flags (#26 — discriminated-union + capabilities).
+ *
+ * Cloud-only or backend-varying behavior must be exposed here so callers
+ * branch explicitly on a capability flag (`if (provider.capabilities.asOf)`)
+ * instead of probing a field that one backend silently never populates
+ * (the `?? undefined` anti-pattern this replaces).
+ *
+ * Kept intentionally small and descriptive of what's ACTUALLY wired through
+ * RecallRequestSchema/RecallHitSchema today — not aspirational. Grow this
+ * object as those schemas gain the corresponding fields (as_of, per-signal
+ * score explanation, etc.) rather than guessing ahead of the wire contract.
+ *
+ * Per-backend atom variants (AtomV1Local / AtomV1Cloud over a shared
+ * AtomV1Base, as sketched by the architect) are NOT modeled yet:
+ * @astragenie/astramem-contracts currently publishes one unified AtomV1
+ * schema with no backend-specific split — adopting a discriminated atom
+ * union is blocked on that upstream package support.
+ */
+export interface ProviderCapabilities {
+  /** 'single' — one implicit tenant (local daemon on this machine).
+   *  'multi' — backend scopes memories by workspace/org (SaaS). */
+  tenancy: 'single' | 'multi';
+  /** Whether recall() currently accepts a bitemporal as_of query
+   *  (ADR-005 RetrievalQueryV1.filters.as_of). Neither provider wires this
+   *  through RecallRequestSchema yet — false for both until that lands. */
+  asOf: boolean;
+  /** Score-explanation signal names this backend's recall results carry.
+   *  Empty for both providers today — RecallHitSchema has no `explanation`
+   *  field yet (ADR-005 ScoreExplanation is defined package-side but not
+   *  wired through this plugin's wire contract). */
+  explainSignals: string[];
+}
+
 export interface MemoryProvider {
+  /** Static capability description for this backend — see ProviderCapabilities. */
+  readonly capabilities: ProviderCapabilities;
+
   /**
    * Fire-and-forget ingest. Errors are logged but do not propagate to the caller.
    * Must complete or time out within 2 seconds.

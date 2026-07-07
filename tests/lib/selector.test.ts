@@ -19,6 +19,7 @@ vi.mock('../../src/lib/datadir.ts', () => ({
 // Mock provider implementations
 // ---------------------------------------------------------------------------
 const makeMockProvider = (): MemoryProvider => ({
+  capabilities: { tenancy: 'single', asOf: false, explainSignals: [] },
   ingest: vi.fn().mockResolvedValue(undefined),
   ingestTranscript: vi.fn().mockResolvedValue(undefined),
   recall: vi.fn().mockResolvedValue({ hits: [] }),

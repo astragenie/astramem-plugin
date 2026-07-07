@@ -19,7 +19,7 @@
  *   5xx / network → TransientError (retry once for ingest; throw for recall/remember/health)
  */
 
-import type { MemoryProvider } from '../contracts/provider.ts';
+import type { MemoryProvider, ProviderCapabilities } from '../contracts/provider.ts';
 import type {
   IngestPayload,
   RecallRequest,
@@ -33,6 +33,7 @@ import { readLocalBearer } from '../lib/secrets.ts';
 import { resolveEnv } from '../lib/env.ts';
 import { ENV } from '../lib/env-specs.ts';
 import { scrubWithLabels } from '../lib/scrub.ts';
+import { mapRecallRequestToLocalFilters } from '../lib/wire-mapping.ts';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -110,6 +111,18 @@ async function assertOk(res: Response, context: string): Promise<void> {
 
 export class LocalProvider implements MemoryProvider {
   private readonly baseUrl: string;
+
+  /** Local daemon is single-tenant on this machine; as_of and per-signal
+   *  explanation aren't wired through the wire contract yet — see
+   *  ProviderCapabilities doc. The daemon internally fuses bm25/cosine/
+   *  importance/freshness (astramem-local src/search/fuse.ts) but
+   *  RecallHitSchema doesn't surface a per-hit explanation yet, so
+   *  explainSignals stays empty until that field exists on the wire. */
+  readonly capabilities: ProviderCapabilities = {
+    tenancy: 'single',
+    asOf: false,
+    explainSignals: [],
+  };
 
   constructor(baseUrl?: string) {
     this.baseUrl = (baseUrl ?? resolveBaseUrl()).replace(/\/$/, '');
@@ -219,17 +232,14 @@ export class LocalProvider implements MemoryProvider {
     // FEAT-423: the daemon's POST /recall reads scoping under a nested
     // `filters` object ({ repo, project, agent }) — NOT top-level. Sending
     // repo/project/agent flat (the prior shape) made every filter a silent
-    // no-op (issue #56: "any --project value returns everything"). Build the
-    // filters object explicitly and omit it entirely when empty so an
-    // unscoped recall stays byte-identical to before.
-    const filters: Record<string, unknown> = {};
-    if (req.repo !== undefined) filters['repo'] = req.repo;
-    if (req.project !== undefined) filters['project'] = req.project;
-    if (req.agent !== undefined) filters['agent'] = req.agent;
+    // no-op (issue #56: "any --project value returns everything"). Shared
+    // mapper (src/lib/wire-mapping.ts, #26) omits the key entirely when
+    // empty so an unscoped recall stays byte-identical to before.
+    const filters = mapRecallRequestToLocalFilters(req);
     const body = {
       query: req.query,
       k: req.k,
-      ...(Object.keys(filters).length > 0 ? { filters } : {}),
+      ...(filters ? { filters } : {}),
     };
     const res = await fetchWithTimeout(
       `${this.baseUrl}/recall`,
