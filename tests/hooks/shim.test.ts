@@ -165,4 +165,34 @@ describe.skipIf(skipOnWin32)('hook shim exit-code + secret-leak gate (FEAT 4a Sl
     expect(r.exitCode).toBe(0);
     assertNoSecretLeak(r);
   });
+
+  // -------------------------------------------------------------------------
+  // session-start-recall.sh (issue #31 — read-side hook)
+  // -------------------------------------------------------------------------
+  // Contract differs from the capture shims: on success it PRINTS a
+  // hookSpecificOutput JSON object; on ANY failure it must print NOTHING
+  // (partial/garbled stdout would be injected into the session as context).
+
+  it('session-start-recall.sh: exits 0 with EMPTY stdout when provider unreachable', () => {
+    const r = runShim('session-start-recall.sh', '{"session_id":"t","cwd":"C:/tmp/some-project"}');
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    assertNoSecretLeak(r);
+  });
+
+  it('session-start-recall.sh: exits 0 on empty stdin (falls back to $PWD project)', () => {
+    const r = runShim('session-start-recall.sh', '');
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    assertNoSecretLeak(r);
+  });
+
+  it('session-start-recall.sh: MEMORY_SESSIONSTART_RECALL_DISABLE=1 is a silent no-op', () => {
+    const r = runShim('session-start-recall.sh', '{"cwd":"C:/tmp/some-project"}', {
+      MEMORY_SESSIONSTART_RECALL_DISABLE: '1',
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    assertNoSecretLeak(r);
+  });
 });
