@@ -96,6 +96,27 @@ local and SaaS backends. See `src/lib/selector.ts` for the implementation.
 The selector source is reported in `astramem doctor` output and in structured log lines emitted
 at each dispatch.
 
+### Using the selector as a library
+
+`resolveProvider()` is importable outside the CLI via the `./selector` export
+(see `exports` in `package.json`):
+
+```ts
+import { resolveProvider } from '@astragenie/astramem-plugin/selector';
+
+const result = await resolveProvider({});
+result.providerName; // 'local' | 'saas' — THE supported backend-identity field
+result.provider.backend; // 'local' | 'saas' — same value, readable off the
+                          // provider handle alone when that's all a caller has
+```
+
+`SelectorResult.providerName` is the canonical field for "which backend did the
+selector choose" — prefer it whenever you have a `SelectorResult` in hand. For
+code paths that only receive the `provider` object (e.g. after destructuring
+`const { provider } = await resolveProvider()`), the resolved provider
+instance is also stamped with a readonly `backend` property carrying the same
+value, so backend identity never has to be threaded through separately.
+
 ---
 
 ## Unified config directory

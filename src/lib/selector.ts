@@ -20,7 +20,7 @@
  * WireIncompatibilityError; an unreachable or pre-contract ("legacy")
  * backend only warns to stderr and resolution proceeds.
  */
-import type { SelectorResult } from '../contracts/selector.ts';
+import type { SelectorResult, ProviderHandle } from '../contracts/selector.ts';
 import type { Provider } from '../contracts/selector.ts';
 import type { MemoryProvider } from '../contracts/provider.ts';
 import { loadConfig } from './config.ts';
@@ -307,17 +307,33 @@ async function cachedHealthProbe(
 // Provider loader (lazy dynamic import — Track A files may not exist yet)
 // ---------------------------------------------------------------------------
 
-async function loadProvider(name: Provider): Promise<MemoryProvider> {
+async function loadProvider(name: Provider): Promise<ProviderHandle> {
   if (name === 'local') {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const mod = await import('../providers/local.ts');
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    return new (mod.LocalProvider as new () => MemoryProvider)();
+    return stampBackend(new (mod.LocalProvider as new () => MemoryProvider)(), name);
   }
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const mod = await import('../providers/saas.ts');
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  return new (mod.SaasProvider as new () => MemoryProvider)();
+  return stampBackend(new (mod.SaasProvider as new () => MemoryProvider)(), name);
+}
+
+/**
+ * Stamp a readonly `backend` identity onto a resolved provider instance
+ * (issue #35). Provider instances are plain class objects, so this is a
+ * safe, additive `Object.defineProperty` — no wire/behavior change, just a
+ * convenience for callers holding only the provider handle.
+ */
+function stampBackend(provider: MemoryProvider, backend: Provider): ProviderHandle {
+  Object.defineProperty(provider, 'backend', {
+    value: backend,
+    writable: false,
+    enumerable: true,
+    configurable: false,
+  });
+  return provider as ProviderHandle;
 }
 
 // ---------------------------------------------------------------------------

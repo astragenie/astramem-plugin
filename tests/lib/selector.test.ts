@@ -314,6 +314,59 @@ describe('resolveProvider — data-local privacy-safe policy', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Backend identity on the provider handle (issue #35).
+// ---------------------------------------------------------------------------
+describe('resolveProvider — backend identity on provider handle', () => {
+  it('stamps provider.backend === "local" on the local resolution path', async () => {
+    writeConfig('local');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const result = await resolveProvider({});
+    expect(result.providerName).toBe('local');
+    expect(result.provider.backend).toBe('local');
+  });
+
+  it('stamps provider.backend === "saas" on the saas resolution path', async () => {
+    writeConfig('saas');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const result = await resolveProvider({});
+    expect(result.providerName).toBe('saas');
+    expect(result.provider.backend).toBe('saas');
+  });
+
+  it('a caller holding only the provider handle can still read its backend', async () => {
+    writeConfig('local');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const { provider } = await resolveProvider({});
+    expect(provider.backend).toBe('local');
+  });
+
+  it('provider.backend is readonly — reassignment does not change it', async () => {
+    writeConfig('local');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const result = await resolveProvider({});
+    const mutate = () => {
+      Object.assign(result.provider, { backend: 'saas' });
+    };
+    // Object.defineProperty(..., { writable: false }) throws under strict
+    // mode (ESM is always strict) when a property is reassigned.
+    expect(mutate).toThrow();
+    expect(result.provider.backend).toBe('local');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Startup wire-version compatibility probe (FEAT 4a backlog M1) — wiring
 // tests. The probe module's own classification logic (compatible/legacy/
 // unreachable/incompatible) is covered by tests/lib/wire-probe.test.ts; these
