@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 // astramem — AstraMemory CLI dispatcher (Wave 2 Track C)
-// Subcommands: ingest-transcript | recall | remember | health | config | doctor | connect
+// Subcommands: ingest-transcript | recall | remember | health | config | doctor | connect | export-md
 // Global: --provider local|saas|auto  (parsed, stored, passed to subcommands)
 //         --help | -h                  (prints usage)
 //         --version                    (prints 0.5.2)
 
 const VERSION = '0.5.2';
 
-const SUBCOMMANDS = ['ingest-transcript', 'recall', 'remember', 'health', 'config', 'doctor', 'connect'] as const;
+const SUBCOMMANDS = ['ingest-transcript', 'recall', 'remember', 'health', 'config', 'doctor', 'connect', 'export-md'] as const;
 type Subcommand = typeof SUBCOMMANDS[number];
 type Provider = 'local' | 'saas' | 'auto';
 
@@ -24,6 +24,7 @@ Subcommands:
   config              Get or set configuration (config get [key] | config set <key> <val>)
   doctor              Diagnose selector resolution, logs, env vars, and config
   connect             Connect to the local AstraMemory daemon
+  export-md           Write a repo-visible MEMORY.md digest of deliberate memories
 
 Global flags:
   --provider local|saas|auto  Override provider selection
@@ -126,6 +127,11 @@ async function main(): Promise<void> {
     case 'connect': {
       const { runConnect } = await import('../src/cli/connect.ts');
       exitCode = await runConnect();
+      break;
+    }
+    case 'export-md': {
+      const { runExportMd } = await import('../src/cli/export-md.ts');
+      exitCode = await runExportMd(subArgs, { provider: providerFlag });
       break;
     }
   }

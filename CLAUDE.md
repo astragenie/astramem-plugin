@@ -108,6 +108,46 @@ schema.
 **Observability**: with `ASTRAMEM_HOOK_DEBUG=1`, `resolveProject()` prints which
 precedence tier won to stderr: `[astramem-hook-debug] resolveProject: tier=<flag|env|config|basename> value=<...>`.
 
+## MEMORY.md digest vs SessionStart recall (issue #34)
+
+Two different read-side surfaces exist and are deliberately not merged:
+
+- **SessionStart recall hook** (`hooks/scripts/session-start-recall.sh`, issues
+  #31/#32) — *live, machine-local session injection*. Fires every session
+  start, recalls all types unfiltered, and never touches disk. On by default.
+- **`astramem export-md`** (`src/cli/export-md.ts`) — *committed, human/CI-readable
+  snapshot*. Recalls only deliberate memory types (`decision`,`lesson` by
+  default — free-form/auto-distilled types are excluded on purpose, since a
+  git sink is a much higher-stakes destination than a transient prompt) and
+  writes them to `.claude/astramem/MEMORY.md` (default path).
+
+Because the wire `RecallRequest` has no per-type filter, `export-md` over-fetches
+with one semantic query and buckets the results by `hit.type` client-side,
+keeping the top `--k` per type.
+
+**Re-scrub at export time**: ingest-time scrubbing only ever runs once, when an
+atom is first captured. `export-md` re-runs `scrubWithLabels()` over every
+atom's text immediately before writing — a git-committed file persists (history,
+forks, CI logs) in a way the local daemon's own store does not, so it gets a
+second, independent scrub pass rather than trusting the one already applied.
+
+**write-if-different**: if the rendered markdown is byte-identical to what's
+already on disk, the file is left untouched (no wall-clock timestamp is
+stamped into the file, specifically so this comparison is stable run-to-run).
+
+**Opt-in freshness hook**: `hooks/scripts/session-end-export-md.sh` runs
+`export-md` on `SessionEnd`, gated on `MEMORY_EXPORT_MD_ENABLE=1` (default
+**off** — a hook must never write into a user's repo without explicit opt-in).
+When disabled it's a fast no-op.
+
+```sh
+astramem export-md [--project <name>] [--out <path>] [--k <N>] [--types <csv>] [--cwd <path>]
+# --project   default via resolveProject({ cwd })
+# --out       default .claude/astramem/MEMORY.md
+# --k         per-type cap, default 10
+# --types     default "decision,lesson"
+```
+
 ## Path handling (issue #12)
 
 Claude Code may hand a subagent transcript path with:
