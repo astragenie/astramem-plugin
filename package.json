@@ -8,7 +8,8 @@
     ".": "./src/contracts/index.ts",
     "./providers/local": "./src/providers/local.ts",
     "./providers/saas": "./src/providers/saas.ts",
-    "./contracts": "./src/contracts/index.ts"
+    "./contracts": "./src/contracts/index.ts",
+    "./selector": "./src/lib/selector.ts"
   },
   "bin": {
     "memory-login": "./bin/memory-login.ts",
