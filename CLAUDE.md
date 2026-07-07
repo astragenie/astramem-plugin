@@ -77,6 +77,37 @@ Claude Code. All three hook scripts will print to stderr:
 This surfaces path resolution failures without modifying normal fire-and-forget
 behaviour.
 
+## Default project-scope resolution (issue #33)
+
+`--project`/`--agent` flags on `remember`/`recall` already existed and are wired
+straight through to the daemon (`metadata.project` on write, `provenance.project`
+on read — no wire schema change here). The gap this closed: nothing resolved a
+*default* project when the flag was omitted, so the CLI (no flag → no scope) and
+the hooks (`basename $CWD` in bash) derived scope independently and could drift.
+
+**`resolveProject()`** (`src/lib/project.ts`) is now the single source of truth,
+used by every project-scope call site — `remember`, `recall`,
+`ingest-transcript`, and (via the CLI, not bash) all four hook shims. Precedence,
+highest wins:
+
+1. `flag` — explicit `--project` value the caller parsed
+2. `env` — `ASTRAMEM_PROJECT`
+3. `config` — `project` field in the unified config (`astramem config set project <name>`)
+4. `basename` — `basename(cwd)`, falling back to `'default'` if empty
+
+`cwd` defaults to `process.cwd()`; callers that receive an explicit `cwd` from a
+hook payload (`--cwd` on `remember`/`recall`/`ingest-transcript`) pass it through
+so the resolution matches the session's working directory rather than the hook
+subprocess's own cwd.
+
+Client-local only — deliberately does **not** read `.claude/loop.json` (that's a
+different "project" concept scoped to the loop harness; reading it here risked
+drift between the two, deferred to a future slice) and does not touch any wire
+schema.
+
+**Observability**: with `ASTRAMEM_HOOK_DEBUG=1`, `resolveProject()` prints which
+precedence tier won to stderr: `[astramem-hook-debug] resolveProject: tier=<flag|env|config|basename> value=<...>`.
+
 ## Path handling (issue #12)
 
 Claude Code may hand a subagent transcript path with:

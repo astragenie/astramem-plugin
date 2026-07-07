@@ -7,6 +7,12 @@
 #   - Path normalization: convert backslashes to forward slashes before passing
 #     to the CLI (the CLI does its own path.resolve() but belt-and-suspenders here)
 #   - ASTRAMEM_HOOK_DEBUG=1: print resolved path + parent-dir listing to stderr
+#
+# issue #33: project scope is no longer derived here via `basename $CWD` — that
+# duplicated (and could drift from) the CLI's own default resolution. We pass
+# --cwd through and let `astramem ingest-transcript` resolve the default project
+# via resolveProject() (src/lib/project.ts), which is the single source of truth
+# for every call site (remember/recall/ingest-transcript + all hook shims).
 set +e
 set -u
 
@@ -25,11 +31,8 @@ AGENT_TYPE="$(printf '%s' "$PAYLOAD" | jq -r '.agent_type // empty')"
 if [ -n "$TRANSCRIPT_PATH" ]; then
   TRANSCRIPT_PATH="${TRANSCRIPT_PATH//\\//}"
 fi
-
 if [ -n "$CWD" ]; then
-  PROJECT_ID="$(basename "$CWD")"
-else
-  PROJECT_ID="$(basename "$PWD")"
+  CWD="${CWD//\\//}"
 fi
 
 # Debug logging: export ASTRAMEM_HOOK_DEBUG=1 to surface path resolution info.
@@ -50,7 +53,6 @@ ARGS=(
   ingest-transcript
   --event session_end
   --session-id "$SESSION_ID"
-  --project-id "$PROJECT_ID"
 )
 [ -n "$TRANSCRIPT_PATH" ] && ARGS+=(--transcript-path "$TRANSCRIPT_PATH")
 [ -n "$CWD" ] && ARGS+=(--cwd "$CWD")

@@ -25,6 +25,13 @@ export const AstramemConfigSchema = z.object({
   logging: z.object({
     level: z.enum(['debug', 'info', 'warn', 'error', 'silent']).default('info'),
   }).default({}),
+
+  /**
+   * Default project scope (issue #33). Third-tier fallback in resolveProject()
+   * (src/lib/project.ts), below --project/--agent flags and ASTRAMEM_PROJECT,
+   * above the basename(cwd) bottom tier. Set via `astramem config set project <name>`.
+   */
+  project: z.string().optional(),
 });
 
 export type AstramemConfig = z.infer<typeof AstramemConfigSchema>;

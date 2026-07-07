@@ -5,8 +5,8 @@
 #
 # Contract (mirrors the three capture shims):
 #   - fire-and-forget: ALWAYS exits 0 — a memory recall must never block a session
-#   - silent no-op on: disabled via env, empty project, provider unreachable
-#     (CLI exit 3), timeout, malformed response, or zero hits
+#   - silent no-op on: disabled via env, provider unreachable (CLI exit 3),
+#     timeout, malformed response, or zero hits
 #   - on success: prints ONE compact JSON object with
 #     hookSpecificOutput.additionalContext (SessionStart schema)
 #
@@ -16,6 +16,12 @@
 #   MEMORY_SESSIONSTART_RECALL_QUERY      recall query override
 #   MEMORY_SESSIONSTART_MAX_ATOM_CHARS    per-atom truncation (default 300)
 #   ASTRAMEM_HOOK_DEBUG=1                 debug info on stderr
+#
+# issue #33: project scope is no longer derived here via `basename $CWD` — that
+# duplicated (and could drift from) the CLI's own default resolution. We pass
+# --cwd through and let `astramem recall` resolve the default project via
+# resolveProject() (src/lib/project.ts), the single source of truth shared with
+# remember/ingest-transcript and the capture hook shims.
 set +e
 set -u
 
@@ -32,21 +38,19 @@ fi
 # Normalize path separators (same belt-and-suspenders as session-end-summary.sh).
 if [ -n "$CWD" ]; then
   CWD="${CWD//\\//}"
-  PROJECT_ID="$(basename "$CWD")"
-else
-  PROJECT_ID="$(basename "$PWD")"
 fi
-[ -z "$PROJECT_ID" ] && exit 0
 
 K="${MEMORY_SESSIONSTART_RECALL_K:-8}"
 QUERY="${MEMORY_SESSIONSTART_RECALL_QUERY:-project context decisions lessons constraints state}"
 MAX_CHARS="${MEMORY_SESSIONSTART_MAX_ATOM_CHARS:-300}"
 
 if [ "${ASTRAMEM_HOOK_DEBUG:-}" = "1" ]; then
-  printf '[astramem-hook-debug] session-start-recall: project=%s k=%s\n' "$PROJECT_ID" "$K" >&2
+  printf '[astramem-hook-debug] session-start-recall: cwd=%s k=%s\n' "$CWD" "$K" >&2
 fi
 
-RESP="$(bun "${CLAUDE_PLUGIN_ROOT}/bin/astramem" recall --query "$QUERY" --project "$PROJECT_ID" --k "$K" 2>/dev/null)"
+ARGS=(recall --query "$QUERY" --k "$K")
+[ -n "$CWD" ] && ARGS+=(--cwd "$CWD")
+RESP="$(bun "${CLAUDE_PLUGIN_ROOT}/bin/astramem" "${ARGS[@]}" 2>/dev/null)"
 RC=$?
 if [ $RC -ne 0 ] || [ -z "$RESP" ]; then
   if [ "${ASTRAMEM_HOOK_DEBUG:-}" = "1" ]; then
@@ -57,8 +61,12 @@ fi
 
 # Transform hits → additionalContext. `empty` when no usable hits (prints
 # nothing, exit 0). Any jq failure is swallowed — never emit partial JSON.
+# Note: the message no longer echoes the resolved project name — that value
+# lives solely inside the CLI's resolveProject() (issue #33) now, and
+# re-deriving it here for display would reintroduce the same drift risk we
+# just removed (e.g. an ASTRAMEM_PROJECT/config.project override wouldn't be
+# reflected in a bash-computed label).
 printf '%s' "$RESP" | jq -c \
-  --arg project "$PROJECT_ID" \
   --argjson max "$MAX_CHARS" '
   [.hits[]?
     | select((.text | type) == "string" and (.text | length) > 0)
@@ -68,7 +76,7 @@ printf '%s' "$RESP" | jq -c \
       { hookSpecificOutput: {
           hookEventName: "SessionStart",
           additionalContext: (
-            "astramem recall (project: \($project), top \($lines | length)) — background memory from the local daemon; snapshots of when they were written, verify before acting on them:\n"
+            "astramem recall (top \($lines | length)) — background memory from the local daemon; snapshots of when they were written, verify before acting on them:\n"
             + ($lines | join("\n"))
           )
       } }

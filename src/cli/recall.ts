@@ -5,6 +5,7 @@ import { RecallRequestSchema } from '../contracts/wire.ts';
 import type { Provider } from '../contracts/selector.ts';
 import type { MemoryProvider } from '../contracts/provider.ts';
 import { resolveProvider } from '../lib/selector.ts';
+import { resolveProject } from '../lib/project.ts';
 
 /** Injected opts for tests. */
 export interface RecallOpts {
@@ -37,6 +38,8 @@ export async function runRecall(args: string[], opts: RecallOpts = {}): Promise<
   let repo: string | undefined;
   let project: string | string[] | undefined;
   let agent: string | string[] | undefined;
+  let cwd: string | undefined;
+  let projectFlagGiven = false;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -54,10 +57,15 @@ export async function runRecall(args: string[], opts: RecallOpts = {}): Promise<
         break;
       case '--project':
         project = csvArg(args[i + 1]);
+        projectFlagGiven = true;
         i++;
         break;
       case '--agent':
         agent = csvArg(args[i + 1]);
+        i++;
+        break;
+      case '--cwd':
+        cwd = args[i + 1];
         i++;
         break;
       default:
@@ -68,6 +76,14 @@ export async function runRecall(args: string[], opts: RecallOpts = {}): Promise<
   if (!query) {
     process.stderr.write('astramem recall: --query <text> is required\n');
     return 3;
+  }
+
+  // issue #33: when --project wasn't passed at all, default via
+  // resolveProject() (flag > ASTRAMEM_PROJECT env > config.project >
+  // basename(cwd)) so ad-hoc `recall` calls scope the same way the hooks do.
+  // An explicit --project (including an explicit empty value) still wins.
+  if (!projectFlagGiven) {
+    project = resolveProject({ cwd });
   }
 
   const reqParsed = RecallRequestSchema.safeParse({ query, k, repo, project, agent });
