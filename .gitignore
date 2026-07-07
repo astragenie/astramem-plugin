@@ -20,3 +20,15 @@ auth.json
 .claude/logs/
 .claude/state/
 .in_use/
+
+# Local git worktrees + orphan markers (transient; never commit the nested checkout).
+.claude/worktrees/
+.orphaned_at
+
+# crew:start
+# Crew framework local state. Generated; do not edit between markers.
+.claude/logs/
+.claude/state/crew/history.jsonl
+.claude/state/crew/approvals.jsonl
+.claude.backup.*
+# crew:end

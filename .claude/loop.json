@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "presetName": "typescript-plugin-dev",
+  "description": "TypeScript Claude Code plugin development. Source in `src/scripts/**/*.mts` compiled to `scripts/**/*.mjs` (committed; CI checks `git diff --exit-code scripts/`). Node ESM runtime for CLI/validators; Bun test runner (`bun test --parallel`); ESLint + Prettier. Fits loop / hero-crew / any AstraGenie Claude Code plugin repo.",
+  "projectType": "claude-plugin",
+  "split": false,
+  "frontend": { "framework": "none", "language": "typescript" },
+  "backend": { "framework": "node", "language": "typescript", "storage": "none" },
+  "contract": "none",
+  "deployment": "none",
+  "loop": {
+    "aiLoopRoot": ".claude/artifacts/loop/ai-loop",
+    "backlogPath": ".claude/artifacts/loop/ai-loop/backlog",
+    "slicesRoot": ".claude/artifacts/loop/ai-loop/slices",
+    "backlogRoot": ".claude/artifacts/loop/backlog",
+    "specsRoot": ".claude/artifacts/loop/specs",
+    "gradesRoot": ".claude/artifacts/loop/grades",
+    "decisionsRoot": ".claude/artifacts/loop/decisions",
+    "phaseGateArtifactDir": ".claude/artifacts/crew/validations",
+    "maxIterations": 25,
+    "marathonMode": true
+  },
+  "stack": {
+    "build": [
+      { "cmd": "bun", "args": ["run", "lint"] }
+    ],
+    "test": [
+      { "cmd": "bun", "args": ["test", "--parallel"] },
+      { "cmd": "node", "args": ["./scripts/validate-manifests.mjs"] },
+      { "cmd": "node", "args": ["./scripts/validate-content-length.mjs"] }
+    ],
+    "frontendBuild": null,
+    "infraPlan": null,
+    "aspireBoot": null,
+    "healthchecks": []
+  },
+  "reviewers": { "ladder": ["A", "B"] },
+  "mandatoryDocs": [
+    "README.md",
+    "CHANGELOG.md",
+    "docs/code-conventions.md"
+  ],
+  "productName": "Untitled Claude Code plugin",
+  "productDescription": "Override productName and productDescription in .claude/loop.json after install.",
+  "stackDescription": "- TypeScript source (`src/scripts/**/*.mts`) compiled to ECMAScript modules (`scripts/**/*.mjs`)\n- Node 20+ ESM runtime (NodeNext module resolution, ES2022 target)\n- `bun test --parallel` for tests (node:test-compatible; built artifacts at `tests/*.mjs` from `src/tests/*.mts`; `node --test` is the Bun-absent fallback)\n- ESLint flat config + Prettier for lint/format (cap: cyclomatic complexity ≤15)\n- Manifest validators: `scripts/validate-manifests.mjs` (plugin.json + marketplace.json) and `scripts/validate-content-length.mjs` (agents ≤300, skills ≤200 lines)\n- CI checks `git diff --exit-code scripts/` to detect uncommitted .mts → .mjs drift",
+  "skills": ["typescript-pro", "frontend-advisory"],
+  "roles": {
+    "pm": {
+      "skills": ["superpowers:verification-before-completion", "runner:loop-discipline"]
+    },
+    "researcher": {
+      "skills": ["superpowers:verification-before-completion", "runner:loop-discipline"]
+    },
+    "architect": {
+      "skills": ["superpowers:brainstorming", "runner:loop-discipline"]
+    },
+    "document-writer": {
+      "skills": ["runner:loop-discipline"]
+    }
+  }
+}
