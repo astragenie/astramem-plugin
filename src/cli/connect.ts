@@ -1,17 +1,20 @@
 // astramem connect — connect to the local AstraMemory daemon.
-// Reads bearer from secrets.env, probes GET /health. Caches result in local.json.
-// Returns 0 on success, 3 on failure.
+// Reads bearer from secrets.env, probes GET /health for reachability, then
+// GET /whoami to verify the bearer. Caches result in local.json.
+// Returns 0 on success, 3 on failure (unreachable OR bearer rejected).
 //
 // The daemon has never had a /register route (astramemory-local's src/server/app.ts
-// registers health/version/ingest/search/memory/... but no register endpoint), so
-// this no longer attempts one — it goes straight to the health probe.
+// registers health/version/whoami/ingest/search/memory/... but no register
+// endpoint), so this no longer attempts one — it probes /health directly.
 //
-// Bearer validity is reported honestly as a tri-state (see BearerStatus). A 200
+// Bearer validity is reported as a tri-/quad-state (see BearerStatus). A 200
 // from /health does NOT prove the bearer: the daemon serves /health publicly
 // whenever it is bound to loopback (the default), so it never checks the token.
-// We therefore report 'unverified' on a public 200 rather than claiming a
-// validity we never observed. True verification needs an authenticated probe
-// route on the daemon — tracked in astramem-local#129.
+// To actually verify, connect then probes GET /whoami — an authenticated route
+// that requires Bearer on every bind, loopback included (astramem-local#129):
+//   200      → 'verified'
+//   401/403  → 'rejected'
+//   404/etc  → 'unverified' (older daemon without /whoami — graceful fallback)
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { unifiedConfigDir } from '../lib/datadir.ts';
@@ -21,21 +24,22 @@ import { loadConfig } from '../lib/config.ts';
 /**
  * Bearer verification outcome against the daemon.
  * - `absent`     — no bearer configured in secrets.env.
- * - `rejected`   — daemon returned 401/403 (only possible on a non-loopback
- *                  bind, where /health enforces auth). The token is bad.
- * - `unverified` — a bearer is present but the probe could not confirm it,
- *                  because /health answered 200 without requiring auth
- *                  (public-on-loopback) or the probe errored. Validity is
- *                  confirmed on the first authenticated request.
+ * - `verified`   — daemon's authenticated /whoami route accepted the bearer.
+ * - `rejected`   — daemon returned 401/403 (/whoami, or /health on a
+ *                  non-loopback bind). The token is bad.
+ * - `unverified` — a bearer is present but the probe could not confirm it:
+ *                  /health answered 200 publicly (loopback) AND /whoami was
+ *                  unavailable (older daemon, 404) or errored. Validity is
+ *                  then only confirmed on the first authenticated request.
  */
-export type BearerStatus = 'absent' | 'rejected' | 'unverified';
+export type BearerStatus = 'absent' | 'verified' | 'rejected' | 'unverified';
 
 export interface ConnectResult {
   /** Daemon reachable — /health answered 200. */
   ok: boolean;
   /** Whether a bearer was found in secrets.env. */
   bearer_present: boolean;
-  /** Honest bearer verification outcome — see BearerStatus. */
+  /** Bearer verification outcome — see BearerStatus. */
   bearer_status: BearerStatus;
   daemon_version: string | undefined;
   registered_at: string;
@@ -46,10 +50,11 @@ export interface ConnectResult {
  * Run the `astramem connect` subcommand.
  *
  * Reads bearer from Track B's readLocalBearer().
- * Probes GET /health on the local daemon (default: http://127.0.0.1:7777).
+ * Probes GET /health (reachability) then GET /whoami (bearer verification) on
+ * the local daemon (default: http://127.0.0.1:7777).
  * Caches result in unifiedConfigDir()/local.json.
  * Prints human-readable status.
- * Returns 0 on success, 3 on failure.
+ * Returns 0 on success, 3 on failure (unreachable OR bearer rejected).
  */
 export async function runConnect(): Promise<number> {
   const config = loadConfig();
@@ -69,6 +74,14 @@ export async function runConnect(): Promise<number> {
   try {
     const probe = await probeHealth(daemonUrl, bearer);
     result = { ...probe, registered_at: now };
+    // Reachable + a bearer configured → verify it against the authenticated
+    // /whoami route (astramem-local#129). This upgrades the preliminary
+    // 'unverified' to a real 'verified' / 'rejected'.
+    if (result.ok && bearer) {
+      const verified = await verifyBearer(daemonUrl, bearer);
+      result.bearer_status = verified.status;
+      if (verified.version) result.daemon_version = verified.version;
+    }
   } catch (e) {
     result = {
       ok: false,
@@ -91,21 +104,24 @@ export async function runConnect(): Promise<number> {
     // Cache failure is non-fatal
   }
 
-  // Print status
-  if (result.ok) {
+  // A reachable daemon with a rejected bearer is still a failed connect — the
+  // point of connect is to establish an authenticated session.
+  const succeeded = result.ok && result.bearer_status !== 'rejected';
+
+  if (succeeded) {
     process.stdout.write(`  status: CONNECTED\n`);
     if (result.daemon_version) process.stdout.write(`  daemon version: ${result.daemon_version}\n`);
     process.stdout.write(`  bearer: ${describeBearer(result.bearer_status)}\n`);
     process.stdout.write(`  registered_at: ${result.registered_at}\n`);
     return 0;
-  } else {
-    process.stdout.write(`  status: FAILED\n`);
-    if (result.bearer_status === 'rejected') {
-      process.stdout.write(`  bearer: rejected by daemon (HTTP 401/403) — check secrets.env\n`);
-    }
-    if (result.error) process.stdout.write(`  error: ${result.error}\n`);
-    return 3;
   }
+
+  process.stdout.write(`  status: FAILED\n`);
+  if (result.bearer_status === 'rejected') {
+    process.stdout.write(`  bearer: rejected by daemon (HTTP 401/403) — check secrets.env\n`);
+  }
+  if (result.error) process.stdout.write(`  error: ${result.error}\n`);
+  return 3;
 }
 
 /** Human-readable one-liner for a bearer status on the success path. */
@@ -113,22 +129,25 @@ function describeBearer(status: BearerStatus): string {
   switch (status) {
     case 'absent':
       return 'not configured (capture/recall will fail if the daemon requires auth)';
+    case 'verified':
+      return 'present and verified by daemon /whoami';
     case 'unverified':
-      return 'present (unverified — /health is public on loopback; validity confirmed on first authed request)';
+      return 'present (unverified — daemon has no /whoami route; validity confirmed on first authed request)';
     case 'rejected':
-      // Not reachable on the ok path, but keep the switch exhaustive.
+      // Not reachable on the success path, but keep the switch exhaustive.
       return 'rejected by daemon (HTTP 401/403) — check secrets.env';
   }
 }
 
 /**
- * Probe the daemon's GET /health endpoint.
+ * Probe the daemon's GET /health endpoint for reachability + version.
  *
  * A 200 here means the daemon is reachable, but does NOT prove the bearer —
  * the daemon answers /health publicly on a loopback bind (the default), so it
- * may never have checked the token. We only ever downgrade to 'rejected' on an
- * explicit 401/403, which the daemon returns only on a non-loopback bind. See
- * astramem-local#129 for the authed probe route that would make this 'verified'.
+ * may never have checked the token. Returns a preliminary bearer_status that
+ * runConnect() then upgrades via verifyBearer()/whoami. We only downgrade to
+ * 'rejected' here on an explicit 401/403, which /health returns only on a
+ * non-loopback bind.
  */
 async function probeHealth(
   daemonUrl: string,
@@ -164,8 +183,48 @@ async function probeHealth(
   return {
     ok: true,
     bearer_present: bearerPresent,
-    // 200 is reachability, not proof of the bearer — see the fn doc comment.
+    // Preliminary — upgraded by verifyBearer() when a bearer is present.
     bearer_status: bearerPresent ? 'unverified' : 'absent',
     daemon_version: typeof body['version'] === 'string' ? body['version'] : undefined,
   };
+}
+
+/**
+ * Verify a bearer against the daemon's authenticated GET /whoami route
+ * (astramem-local#129). /whoami requires Bearer on every bind (loopback
+ * included), so its response status is an authoritative bearer verdict:
+ *   200      → verified (returns the daemon's reported version too)
+ *   401/403  → rejected
+ *   404/5xx  → unverified (older daemon without /whoami, or transient) —
+ *              we do NOT claim 'verified' for anything but an explicit 200
+ * A network error/timeout also yields 'unverified' — /health already proved
+ * the daemon reachable, so a failed /whoami shouldn't sink the whole connect.
+ */
+async function verifyBearer(
+  daemonUrl: string,
+  bearer: string,
+): Promise<{ status: Exclude<BearerStatus, 'absent'>; version?: string }> {
+  try {
+    const resp = await Promise.race([
+      fetch(`${daemonUrl}/whoami`, { headers: { Authorization: `Bearer ${bearer}` } }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('whoami probe timed out after 5s')), 5000)),
+    ]);
+
+    if (resp.status === 401 || resp.status === 403) return { status: 'rejected' };
+    if (!resp.ok) return { status: 'unverified' };
+
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await resp.json()) as Record<string, unknown>;
+    } catch {
+      // Ignore parse errors
+    }
+    return {
+      status: 'verified',
+      version: typeof body['version'] === 'string' ? body['version'] : undefined,
+    };
+  } catch {
+    // Timeout / connection error — reachability already confirmed by /health.
+    return { status: 'unverified' };
+  }
 }
