@@ -11,7 +11,10 @@
  * Skipped on Win32 when bash is unavailable.
  */
 import { describe, it, expect } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 
@@ -82,6 +85,44 @@ function runShim(
   };
 }
 
+/**
+ * Async variant of runShim, backed by spawn() rather than spawnSync().
+ *
+ * Required whenever the hook needs to reach a fake daemon running in this
+ * SAME test process (startFakeDaemon() below): spawnSync blocks the Node
+ * event loop for the whole child lifetime, so an in-process http.Server can
+ * never actually accept the connection — the child just times out waiting
+ * for a response nobody sends. spawn() doesn't block, so the event loop
+ * stays free to service the fake daemon's requests while the child runs.
+ */
+function runShimAsync(
+  scriptName: string,
+  stdinPayload: string,
+  extraEnv: Record<string, string> = {},
+): Promise<ShimResult> {
+  return new Promise((resolve, reject) => {
+    const scriptPath = join(HOOKS_DIR, scriptName);
+    const child = spawn('bash', [scriptPath], {
+      env: {
+        ...process.env,
+        CLAUDE_PLUGIN_ROOT: REPO_ROOT,
+        MEMORY_API_URL_LOCAL: DEAD_API_URL,
+        MEMORY_SUBAGENT_MAX_TURNS: '5',
+        MEMORY_PRECOMPACT_MAX_TURNS: '5',
+        MEMORY_SESSIONEND_MAX_TURNS: '5',
+        ...extraEnv,
+      },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ exitCode: code, stdout, stderr }));
+    child.stdin.end(stdinPayload);
+  });
+}
+
 function assertNoSecretLeak(result: ShimResult): void {
   const combined = result.stdout + result.stderr;
   for (const pattern of SECRET_PATTERNS) {
@@ -92,6 +133,98 @@ function assertNoSecretLeak(result: ShimResult): void {
 function loadFixtureStdin(fixturePath: string): string {
   return readFileSync(join(fixturePath, 'hook-stdin.json'), 'utf-8');
 }
+
+// ---------------------------------------------------------------------------
+// Fake daemon — for session-start-recall.sh's agent-profile block tests.
+// Routes: GET /health, POST /recall, GET /agents/:agent/profile.
+// Local to this file (not tests/e2e/_helpers.ts — that helper has no /recall
+// or /agents routes and is owned by a different slice of work).
+// ---------------------------------------------------------------------------
+
+interface FakeDaemonOpts {
+  /** hits array returned verbatim as { hits } from POST /recall. */
+  recallHits?: unknown[];
+  /** agent -> profile JSON. Missing key → 404. */
+  profiles?: Record<string, unknown>;
+}
+
+interface FakeDaemonHandle {
+  url: string;
+  requestLog: Array<{ method: string; url: string }>;
+  close(): Promise<void>;
+}
+
+function startFakeDaemon(opts: FakeDaemonOpts): Promise<FakeDaemonHandle> {
+  return new Promise((resolve, reject) => {
+    const requestLog: Array<{ method: string; url: string }> = [];
+    const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      const method = req.method ?? 'GET';
+      const url = req.url ?? '/';
+      requestLog.push({ method, url });
+
+      if (method === 'GET' && url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, version: '0.0.0-fake' }));
+        return;
+      }
+      if (method === 'POST' && url === '/recall') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ hits: opts.recallHits ?? [] }));
+        return;
+      }
+      const profileMatch = /^\/agents\/([^/]+)\/profile$/.exec(url);
+      if (method === 'GET' && profileMatch) {
+        const agent = decodeURIComponent(profileMatch[1]!);
+        const profile = opts.profiles?.[agent];
+        if (!profile) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found', agent }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(profile));
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not found' }));
+    });
+
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as AddressInfo;
+      resolve({
+        url: `http://127.0.0.1:${addr.port}`,
+        requestLog,
+        close: () => new Promise<void>((res) => server.close(() => res())),
+      });
+    });
+  });
+}
+
+const SAMPLE_AGENT_PROFILE = {
+  agent: 'crew:builder',
+  counts: { lesson: 2 },
+  total: 2,
+  first_seen: 100,
+  last_active: 200,
+  top_lessons: [
+    { id: 'l1', text: 'Always run tests before shipping.', importance: 0.9, usefulness: 0.8, created_at: 100 },
+    { id: 'l2', text: 'Prefer composition over inheritance.', importance: 0.7, usefulness: 0.6, created_at: 150 },
+  ],
+  recent_decisions: [],
+  corrections: [
+    {
+      id: 'c1',
+      type: 'fact',
+      text: 'Assumed port 8080 was the default.',
+      action: 'superseded',
+      reason: null,
+      superseded_by: 'l3',
+      superseding_text: 'Default port is 7777.',
+      corrected_at: 190,
+    },
+  ],
+};
 
 // ---------------------------------------------------------------------------
 // Suite
@@ -191,6 +324,132 @@ describe.skipIf(skipOnWin32)('hook shim exit-code + secret-leak gate (FEAT 4a Sl
     const r = runShim('session-start-recall.sh', '{"cwd":"C:/tmp/some-project"}', {
       MEMORY_SESSIONSTART_RECALL_DISABLE: '1',
     });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    assertNoSecretLeak(r);
+  });
+
+  // -------------------------------------------------------------------------
+  // session-start-recall.sh — agent-profile block ("what you learned
+  // previously"). Agent identity is read from payload.agent_type, the same
+  // field the transcript-capture hooks already use — see file header.
+  // -------------------------------------------------------------------------
+
+  it('session-start-recall.sh: renders the agent-profile block within budget when a profile exists', async () => {
+    const daemon = await startFakeDaemon({
+      recallHits: [],
+      profiles: { 'crew:builder': SAMPLE_AGENT_PROFILE },
+    });
+    try {
+      const r = await runShimAsync(
+        'session-start-recall.sh',
+        JSON.stringify({ cwd: 'C:/tmp/some-project', agent_type: 'crew:builder' }),
+        { MEMORY_API_URL_LOCAL: daemon.url },
+      );
+      expect(r.exitCode).toBe(0);
+      assertNoSecretLeak(r);
+
+      const parsed = JSON.parse(r.stdout) as { hookSpecificOutput: { additionalContext: string } };
+      const ctx = parsed.hookSpecificOutput.additionalContext;
+      expect(ctx).toContain('## What you (agent crew:builder) learned previously');
+      expect(ctx).toContain('Always run tests before shipping.');
+      expect(ctx).toContain('previously wrong about: Assumed port 8080 was the default.');
+      // Default MEMORY_PROFILE_MAX_CHARS budget (600) — well within it here.
+      expect(ctx.length).toBeLessThanOrEqual(600 + 50); // + slack for the (empty) recall preamble join
+
+      const profileReq = daemon.requestLog.find((r2) => r2.url.startsWith('/agents/'));
+      expect(profileReq?.url).toBe('/agents/crew%3Abuilder/profile');
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it('session-start-recall.sh: MEMORY_PROFILE_MAX_CHARS clips the agent-profile block to budget', async () => {
+    const daemon = await startFakeDaemon({
+      recallHits: [],
+      profiles: { 'crew:builder': SAMPLE_AGENT_PROFILE },
+    });
+    try {
+      const r = await runShimAsync(
+        'session-start-recall.sh',
+        JSON.stringify({ cwd: 'C:/tmp/some-project', agent_type: 'crew:builder' }),
+        { MEMORY_API_URL_LOCAL: daemon.url, MEMORY_PROFILE_MAX_CHARS: '40' },
+      );
+      expect(r.exitCode).toBe(0);
+      const parsed = JSON.parse(r.stdout) as { hookSpecificOutput: { additionalContext: string } };
+      expect(parsed.hookSpecificOutput.additionalContext.length).toBeLessThanOrEqual(40);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it('session-start-recall.sh: 404 (agent has zero memories) skips the profile block but keeps a successful recall block', async () => {
+    const daemon = await startFakeDaemon({
+      recallHits: [{ id: 'h1', type: 'decision', text: 'Ship on Fridays only with a rollback plan.', score: 0.9 }],
+      profiles: {}, // no profile for any agent → 404
+    });
+    try {
+      const r = await runShimAsync(
+        'session-start-recall.sh',
+        JSON.stringify({ cwd: 'C:/tmp/some-project', agent_type: 'crew:unknown-agent' }),
+        { MEMORY_API_URL_LOCAL: daemon.url },
+      );
+      expect(r.exitCode).toBe(0);
+      const parsed = JSON.parse(r.stdout) as { hookSpecificOutput: { additionalContext: string } };
+      const ctx = parsed.hookSpecificOutput.additionalContext;
+      expect(ctx).toContain('Ship on Fridays only with a rollback plan.');
+      expect(ctx).not.toContain('What you (agent');
+      assertNoSecretLeak(r);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it('session-start-recall.sh: MEMORY_PROFILE_MAX_CHARS=0 disables the block without even calling the daemon', async () => {
+    const daemon = await startFakeDaemon({
+      recallHits: [],
+      profiles: { 'crew:builder': SAMPLE_AGENT_PROFILE },
+    });
+    try {
+      const r = await runShimAsync(
+        'session-start-recall.sh',
+        JSON.stringify({ cwd: 'C:/tmp/some-project', agent_type: 'crew:builder' }),
+        { MEMORY_API_URL_LOCAL: daemon.url, MEMORY_PROFILE_MAX_CHARS: '0' },
+      );
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toBe(''); // no hits configured either → fully silent
+      expect(daemon.requestLog.some((req) => req.url.startsWith('/agents/'))).toBe(false);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it('session-start-recall.sh: skips the profile block silently when the payload has no agent_type', async () => {
+    const daemon = await startFakeDaemon({
+      recallHits: [],
+      profiles: { 'crew:builder': SAMPLE_AGENT_PROFILE },
+    });
+    try {
+      // No agent_type in the payload — matches every real SessionStart payload
+      // Claude Code actually sends for a main-thread session (see file header).
+      const r = await runShimAsync(
+        'session-start-recall.sh',
+        JSON.stringify({ cwd: 'C:/tmp/some-project' }),
+        { MEMORY_API_URL_LOCAL: daemon.url },
+      );
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toBe(''); // no recall hits either → fully silent
+      expect(daemon.requestLog.some((req) => req.url.startsWith('/agents/'))).toBe(false);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it('session-start-recall.sh: stays fully silent when the daemon is down, even with agent_type set', () => {
+    const r = runShim(
+      'session-start-recall.sh',
+      '{"cwd":"C:/tmp/some-project","agent_type":"crew:builder"}',
+    );
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toBe('');
     assertNoSecretLeak(r);

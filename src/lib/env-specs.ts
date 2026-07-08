@@ -119,4 +119,16 @@ export const ENV: Record<string, EnvSpec> = {
     aliases: [],
     default: '12000',
   },
+
+  /**
+   * Hard char budget for the SessionStart agent-profile block ("what you
+   * learned previously"). 0 disables the block entirely. Read directly by
+   * session-start-recall.sh (bash can't import env.ts) — this entry exists
+   * so the canonical name + default stay documented in one place.
+   */
+  profileMaxChars: {
+    canonical: 'MEMORY_PROFILE_MAX_CHARS',
+    aliases: [],
+    default: '600',
+  },
 };

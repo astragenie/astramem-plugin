@@ -217,3 +217,50 @@ export const HealthResponseSchema = z.object({
 });
 
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Agent Profile (read-side "what has this agent learned" — GET /agents/:agent/profile)
+// ---------------------------------------------------------------------------
+// Mirrors astramemory-local's server/queries/agent-profile.ts AgentProfile shape.
+// Local-daemon-only today — there is no SaaS equivalent of this endpoint yet.
+
+export const AgentProfileLessonSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  importance: z.number(),
+  usefulness: z.number(),
+  created_at: z.number(),
+});
+export type AgentProfileLesson = z.infer<typeof AgentProfileLessonSchema>;
+
+export const AgentProfileDecisionSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  importance: z.number(),
+  created_at: z.number(),
+});
+export type AgentProfileDecision = z.infer<typeof AgentProfileDecisionSchema>;
+
+export const AgentProfileCorrectionSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  text: z.string(),
+  action: z.enum(['invalidated', 'superseded']),
+  reason: z.string().nullable(),
+  superseded_by: z.string().nullable(),
+  superseding_text: z.string().nullable(),
+  corrected_at: z.number(),
+});
+export type AgentProfileCorrection = z.infer<typeof AgentProfileCorrectionSchema>;
+
+export const AgentProfileSchema = z.object({
+  agent: z.string(),
+  counts: z.record(z.string(), z.number()),
+  total: z.number(),
+  first_seen: z.number().nullable(),
+  last_active: z.number().nullable(),
+  top_lessons: z.array(AgentProfileLessonSchema),
+  recent_decisions: z.array(AgentProfileDecisionSchema),
+  corrections: z.array(AgentProfileCorrectionSchema),
+});
+export type AgentProfile = z.infer<typeof AgentProfileSchema>;
