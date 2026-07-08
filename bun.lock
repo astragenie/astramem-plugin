@@ -5,7 +5,7 @@
     "": {
       "name": "@astragenie/astramem-plugin",
       "dependencies": {
-        "@astragenie/astramem-contracts": "1.1.0",
+        "@astragenie/astramem-contracts": "1.2.0",
         "zod": "^3.23.0",
       },
       "devDependencies": {
@@ -17,7 +17,7 @@
     },
   },
   "packages": {
-    "@astragenie/astramem-contracts": ["@astragenie/astramem-contracts@1.1.0", "https://npm.pkg.github.com/download/@astragenie/astramem-contracts/1.1.0/1123207417932c0f4114773300e129a1c696dcbf", { "peerDependencies": { "zod": "^4.4.3" } }, "sha512-PjqOuLy7xQc6I//DFkKVF+fFa52m56ys5XmZ9lad2gIfF1T2A1VYfTLiXvOp2reNddDyLD72yzxWYfbrw9aygw=="],
+    "@astragenie/astramem-contracts": ["@astragenie/astramem-contracts@1.2.0", "https://npm.pkg.github.com/download/@astragenie/astramem-contracts/1.2.0/4d02c555109fdb5265d75dac02f466a03b0818a7", { "peerDependencies": { "zod": "^4.4.3" } }, "sha512-C9SpNndU9/RUJu3fO8t3G+Q3OZkxh1jQd2G27DieAIwOf0It/XYQvEJhaazSN+EybfzM7Yr2wAgeQaRKUXCqvw=="],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.21.5", "", { "os": "aix", "cpu": "ppc64" }, "sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ=="],
 
