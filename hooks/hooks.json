@@ -54,6 +54,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "remember|mcp__astramem__remember",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/remember-marker.sh\"",
+            "description": "memory: inline save marker after a remember call (issue #40, default ON — set MEMORY_SAVE_MARKER=0 to disable)"
+          }
+        ]
+      }
     ]
   }
 }

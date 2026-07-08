@@ -148,6 +148,48 @@ astramem export-md [--project <name>] [--out <path>] [--k <N>] [--types <csv>] [
 # --types     default "decision,lesson"
 ```
 
+## Inline save marker (issue #40)
+
+Every deterministic remember call echoes a compact inline marker so the save
+is visible instead of silent:
+
+```
+🧠 astramem · saved 1 (💡 1 fact)
+🧠 astramem · saved 3 (💡 2 fact · 📝 1 lesson)
+```
+
+**Source of truth**: `src/lib/save-marker.ts` — `SAVE_MARKER_EMOJI` (the 10
+ratified canonical types, unknown types fall back to 🧠) and
+`formatSaveMarker(byType)`, which zero-suppresses (returns `null` when
+nothing was saved) and orders segments in canonical enum order with unknown
+types last.
+
+**Deterministic paths only** (scope of this slice):
+- `astramem remember` (`src/cli/remember.ts`) prints structured JSON on
+  success — `{"ok":true,"saved":1,"by_type":{"<type>":1}}` — instead of the
+  old bare `ok`. A single remember always saves exactly one atom of the
+  parsed type.
+- `hooks/scripts/remember-marker.sh` is a `PostToolUse` shim matched on the
+  daemon's `remember` / `mcp__astramem__remember` MCP tool. It reads the
+  saved count/type off the tool response (or falls back to the
+  one-atom-per-call invariant plus the requested type from `tool_input`),
+  formats the marker via `save-marker.ts`, and emits it as a hook
+  `systemMessage`.
+
+**Kill switch**: `MEMORY_SAVE_MARKER=0` disables the marker (default **on**
+— inverted from `MEMORY_EXPORT_MD_ENABLE`'s default-off, since this marker
+never writes to the repo, it only echoes a transient hook message).
+
+**Out of scope — transcript-capture markers deferred**: PreCompact and
+SubagentStop go through `provider.ingestTranscript()`
+(`src/contracts/provider.ts`), which returns `Promise<void>` — the daemon
+distills atoms from the transcript asynchronously, so there is no
+synchronous per-type saved count available at hook-fire time to format a
+marker from. Unblocking this needs a daemon-side change (e.g. the ingest
+endpoint returning a count-in-response once distillation completes
+synchronously, or a follow-up poll), tracked as future work, not part of
+this slice.
+
 ## Path handling (issue #12)
 
 Claude Code may hand a subagent transcript path with:

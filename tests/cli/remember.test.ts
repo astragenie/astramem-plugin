@@ -23,11 +23,18 @@ describe('runRemember', () => {
   beforeEach(() => { cap = captureOutput(); });
   afterEach(() => { cap.restore(); });
 
-  it('returns 0 and prints "ok" on success', async () => {
+  it('returns 0 and prints structured JSON on success (issue #40)', async () => {
     const provider = createMockProvider();
     const code = await runRemember(['--content', 'Decision: use Bun'], { _provider: provider });
     expect(code).toBe(0);
-    expect(cap.stdout.join('')).toMatch(/^ok/);
+    expect(JSON.parse(cap.stdout.join(''))).toEqual({ ok: true, saved: 1, by_type: { fact: 1 } });
+  });
+
+  it('structured JSON reflects the parsed --type (issue #40)', async () => {
+    const provider = createMockProvider();
+    const code = await runRemember(['--content', 'note', '--type', 'lesson'], { _provider: provider });
+    expect(code).toBe(0);
+    expect(JSON.parse(cap.stdout.join(''))).toEqual({ ok: true, saved: 1, by_type: { lesson: 1 } });
   });
 
   it('calls provider.remember with correct payload shape', async () => {

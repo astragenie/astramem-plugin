@@ -111,7 +111,12 @@ export async function runRemember(args: string[], opts: RememberOpts = {}): Prom
 
   try {
     await provider.remember(payload);
-    process.stdout.write('ok\n');
+    // A single remember() call always saves exactly one atom of the parsed
+    // type — structured so callers (and the remember-marker hook shim,
+    // issue #40) can format an inline save marker without re-deriving the
+    // count. See src/lib/save-marker.ts.
+    const result = { ok: true, saved: 1, by_type: { [payload.type]: 1 } };
+    process.stdout.write(`${JSON.stringify(result)}\n`);
     return 0;
   } catch (e) {
     process.stderr.write(`astramem remember: backend error — ${(e as Error).message}\n`);
