@@ -63,14 +63,24 @@ describe('runHealth', () => {
 
   it('returns 3 when health probe times out', async () => {
     vi.useFakeTimers();
-    const provider = createMockProvider({
-      healthResult: () => new Promise<never>(() => { /* hangs */ }),
-    });
-    const raceP = runHealth([], { _provider: provider, _providerName: 'local' });
-    await vi.advanceTimersByTimeAsync(5100);
-    const code = await raceP;
-    expect(code).toBe(3);
-    vi.useRealTimers();
+    try {
+      const provider = createMockProvider({
+        healthResult: () => new Promise<never>(() => { /* hangs */ }),
+      });
+      const raceP = runHealth([], { _provider: provider, _providerName: 'local' });
+      // Flush microtasks until runHealth has registered its timeout timer,
+      // then advance past the 5s deadline. Sync advanceTimersByTime — bun's
+      // vitest-compat `vi` shim has no advanceTimersByTimeAsync (the async
+      // variant this used before threw "is not a function" under `bun test`).
+      while (vi.getTimerCount() === 0) {
+        await Promise.resolve();
+      }
+      vi.advanceTimersByTime(5100);
+      const code = await raceP;
+      expect(code).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('output has all required fields', async () => {
