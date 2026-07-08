@@ -577,7 +577,18 @@ describe('LocalProvider — retry skips when caller signal is already aborted (r
     expect(fetchCallCount).toBe(2);
   });
 
-  it('ingestTranscript(): does not retry when signal is already aborted before the first attempt', async () => {
+  it('ingestTranscript(): skips the network attempt entirely when signal is already aborted before the call (SDK migration)', async () => {
+    // Pre-SDK behavior made one doomed fetch attempt here (fetchCallCount
+    // was 1) because linkSignals() combined the external signal into the
+    // one actually passed to fetch(), so the request rejected immediately.
+    // AstramemDaemonClient's internal fetch only *listens* for a future
+    // 'abort' event on the caller signal — per the AbortSignal spec, adding
+    // a listener to an already-aborted signal never fires it, so it cannot
+    // reproduce that immediate-rejection behavior on its own. LocalProvider
+    // now guards with an explicit assertNotAborted() check before handing
+    // off to the SDK client, so an already-given-up caller skips the network
+    // attempt altogether — a strict improvement (same fire-and-forget
+    // resolve-without-throwing contract, zero wasted requests instead of one).
     let fetchCallCount = 0;
     globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       fetchCallCount++;
@@ -595,7 +606,7 @@ describe('LocalProvider — retry skips when caller signal is already aborted (r
 
     await provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD, ctrl.signal);
 
-    expect(fetchCallCount).toBe(1);
+    expect(fetchCallCount).toBe(0);
   });
 
   it('ingestTranscript(): retries exactly once as before when signal is undefined and a 5xx occurs (no regression)', async () => {
