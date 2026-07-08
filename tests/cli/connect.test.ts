@@ -1,8 +1,8 @@
 /**
  * Tests for src/cli/connect.ts — astramem connect subcommand.
  *
- * Uses a real HTTP server (createServer) to mock the daemon endpoints.
- * Also tests fallback to /health when /register returns 404.
+ * Uses a real HTTP server (createServer) to mock the daemon's /health endpoint.
+ * The daemon has never had a /register route, so runConnect() probes /health directly.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createServer } from 'node:http';
@@ -64,7 +64,7 @@ describe('runConnect', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('returns 0 when /register succeeds', async () => {
+  it('returns 0 when /health succeeds', async () => {
     const srv = await makeServer((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ version: '0.2.0', ok: true }));
@@ -83,11 +83,13 @@ describe('runConnect', () => {
     }
   });
 
-  it('returns 0 and falls back to /health when /register returns 404', async () => {
+  it('hits /health directly (no /register attempt)', async () => {
+    let registerHit = false;
     const srv = await makeServer((req, res) => {
       if (req.url === '/register') {
-        res.writeHead(404);
-        res.end('not found');
+        registerHit = true;
+        res.writeHead(200);
+        res.end();
       } else if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, version: '0.1.0' }));
@@ -104,6 +106,7 @@ describe('runConnect', () => {
       const code = await runConnect();
       expect(code).toBe(0);
       expect(cap.text()).toMatch(/CONNECTED/);
+      expect(registerHit).toBe(false);
     } finally {
       await srv.close();
     }
@@ -143,7 +146,7 @@ describe('runConnect', () => {
     }
   });
 
-  it('returns 3 when /register returns 404 and /health also fails', async () => {
+  it('returns 3 when /health fails', async () => {
     const srv = await makeServer((_req, res) => {
       res.writeHead(404);
       res.end('not found');

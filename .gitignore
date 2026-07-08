@@ -1,9 +1,11 @@
 # memory plugin gitignore.
 
-# Local override of committed profiles (.env.local / .env.azuredev).
-# Useful for stashing a real MEMORY_API_KEY or Clerk credentials without
-# touching tracked files.
+# Real env profiles -- copy .env.example to one of these and fill in real
+# values. Never commit these; only .env.example (genericized, no real hosts
+# or credentials) is tracked.
 .env
+.env.local
+.env.azuredev
 
 # Node / Bun artifacts.
 node_modules/
