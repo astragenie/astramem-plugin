@@ -34,3 +34,6 @@ auth.json
 .claude/state/crew/approvals.jsonl
 .claude.backup.*
 # crew:end
+
+# CI writes a GitHub Packages token here at runtime — never commit it.
+.npmrc
