@@ -506,27 +506,44 @@ describe('LocalProvider — internal timer unref + external AbortSignal (issue #
   it(
     'AC-3: with no external signal, the internal timeout still throws TransientError on an unreachable/slow daemon (finally still clears the timer)',
     async () => {
-      // Deliberately uses real timers rather than vi.useFakeTimers() — this
-      // vitest/environment combination has been observed to leave
-      // globalThis.setTimeout broken for later tests after
-      // useFakeTimers()/useRealTimers() cycles here, which is a test-harness
-      // hazard unrelated to the behavior under test. A real ~3s wait is slow
-      // but reliable and keeps global timer state untouched for other tests.
-      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        return new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            reject(new DOMException('This operation was aborted', 'AbortError'));
+      // Fake timers: the internal fetchWithTimeout deadline (3000ms) is
+      // driven forward deterministically instead of waiting on a real
+      // wall-clock timer — scoped to this single test (useFakeTimers/
+      // useRealTimers bracket it directly) so no state leaks to any other
+      // test in this file.
+      vi.useFakeTimers();
+      try {
+        globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('This operation was aborted', 'AbortError'));
+            });
           });
-        });
-      }) as typeof fetch;
+        }) as typeof fetch;
 
-      const provider = new LocalProvider('http://127.0.0.1:19999');
-      // health()'s internal fetchWithTimeout deadline is 3000ms.
-      const err = await provider.health().catch((e: unknown) => e);
+        const provider = new LocalProvider('http://127.0.0.1:19999');
+        const pending = provider.health().catch((e: unknown) => e);
+        // health() awaits buildHeaders() before fetchWithTimeout() ever runs
+        // its `setTimeout(..., 3000)` call, so the internal deadline timer
+        // isn't registered yet at this point — flush the microtask queue
+        // until it is, then advance the fake clock past it. Sync
+        // advanceTimersByTime (not the *Async variant, which Bun's
+        // vitest-compat `vi` shim doesn't implement) fires the timer
+        // callback synchronously, which synchronously aborts ctrl.signal and
+        // fires the mock fetch's 'abort' listener, so the rejection is
+        // already queued by the time we await it below.
+        while (vi.getTimerCount() === 0) {
+          await Promise.resolve();
+        }
+        vi.advanceTimersByTime(3000);
+        const err = await pending;
 
-      expect(err).toBeInstanceOf(TransientError);
-      expect((err as TransientError).kind).toBe('transient');
-      expect((err as Error).message).toMatch(/timed out/i);
+        expect(err).toBeInstanceOf(TransientError);
+        expect((err as TransientError).kind).toBe('transient');
+        expect((err as Error).message).toMatch(/timed out/i);
+      } finally {
+        vi.useRealTimers();
+      }
     },
     10_000,
   );

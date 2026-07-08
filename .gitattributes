@@ -1,0 +1,17 @@
+# Normalize line endings — the repo is authored with LF; without this, every
+# git operation on Windows checkouts warns "LF will be replaced by CRLF".
+# `text=auto eol=lf` stores text files with LF in the repo and checks them out
+# with LF everywhere, killing the churn/warnings.
+* text=auto eol=lf
+
+# Scripts must stay LF regardless of platform (bash/hook shims break on CRLF).
+*.sh text eol=lf
+bin/astramem text eol=lf
+
+# Explicit binaries — never touch these.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
