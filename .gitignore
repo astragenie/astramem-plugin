@@ -20,3 +20,6 @@ auth.json
 .claude/logs/
 .claude/state/
 .in_use/
+
+# CI writes a GitHub Packages token here at runtime — never commit it.
+.npmrc
