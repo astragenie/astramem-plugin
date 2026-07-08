@@ -162,4 +162,58 @@ describe('runConnect', () => {
       await srv.close();
     }
   });
+
+  it('reports bearer_status "unverified" on a public /health 200 (no false validity)', async () => {
+    // Daemon answers /health 200 without checking auth (public-on-loopback).
+    const srv = await makeServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, version: '0.2.0' }));
+    });
+
+    const { setValue } = await import('../../src/lib/config.ts');
+    setValue('local.url', srv.url);
+
+    try {
+      const code = await runConnect();
+      expect(code).toBe(0);
+
+      const { readFileSync } = await import('node:fs');
+      const { unifiedConfigDir } = await import('../../src/lib/datadir.ts');
+      const cached = JSON.parse(
+        readFileSync(join(unifiedConfigDir(), 'local.json'), 'utf-8'),
+      ) as Record<string, unknown>;
+      // A public 200 must never be reported as verified.
+      expect(cached['bearer_status']).toBe('unverified');
+      expect(cached).not.toHaveProperty('bearer_valid');
+      expect(cap.text()).toMatch(/unverified/);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('reports bearer_status "rejected" when /health returns 401', async () => {
+    // Non-loopback bind: /health enforces auth and rejects a bad token.
+    const srv = await makeServer((_req, res) => {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+
+    const { setValue } = await import('../../src/lib/config.ts');
+    setValue('local.url', srv.url);
+
+    try {
+      const code = await runConnect();
+      expect(code).toBe(3);
+
+      const { readFileSync } = await import('node:fs');
+      const { unifiedConfigDir } = await import('../../src/lib/datadir.ts');
+      const cached = JSON.parse(
+        readFileSync(join(unifiedConfigDir(), 'local.json'), 'utf-8'),
+      ) as Record<string, unknown>;
+      expect(cached['bearer_status']).toBe('rejected');
+      expect(cap.text()).toMatch(/rejected by daemon/);
+    } finally {
+      await srv.close();
+    }
+  });
 });
