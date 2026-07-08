@@ -37,6 +37,27 @@ export const MemoryTypeSchema = AtomV1Schema.shape.type;
 export type MemoryType = z.infer<typeof MemoryTypeSchema>;
 
 /**
+ * Memory types the LOCAL daemon has writers for today (astramem-local's 7).
+ * The canonical union adds 3 values — `preference`, `task_result`, `summary` —
+ * documented in the atom.v1 schema as "cloud-only today, until local adds
+ * writers". `LocalProvider.remember()` rejects those 3 at its boundary so they
+ * fail fast with a clear error instead of 422/collapsing server-side (same
+ * fail-at-the-boundary rationale as #39). This is the re-scoped U3c-plugin
+ * narrowing (#38 / #44) — the single canonical AtomV1 is intentional (no
+ * cloud-only *fields* exist), so no discriminated Base/Local/Cloud union is
+ * built; only the temporary type-enum subset is narrowed.
+ *
+ * Widen this list when astramem-local adds the corresponding writers. A shared
+ * `LocalAtomType` enum exported from @astragenie/astramem-contracts would make
+ * it cross-repo SoT (astramem-local#132), but the plugin self-narrows for now
+ * to avoid an upstream dependency. The `LOCAL_ATOM_TYPES ⊆ MemoryTypeSchema`
+ * invariant is guarded by a test so this can't drift to a non-canonical value.
+ */
+export const LOCAL_ATOM_TYPES = ['decision', 'fact', 'lesson', 'command', 'todo', 'note', 'event'] as const;
+export const LocalAtomTypeSchema = z.enum(LOCAL_ATOM_TYPES);
+export type LocalAtomType = z.infer<typeof LocalAtomTypeSchema>;
+
+/**
  * Re-exported canonical capture envelope (ADR-008 astramem-capture@1),
  * unaltered. Used for cross-validation in
  * tests/contracts/transcript-wire.test.ts to prove every payload accepted by

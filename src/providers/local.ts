@@ -27,7 +27,7 @@ import type {
   HealthResponse,
   TranscriptIngestPayload,
 } from '../contracts/wire.ts';
-import { RecallResponseSchema, HealthResponseSchema } from '../contracts/wire.ts';
+import { RecallResponseSchema, HealthResponseSchema, LocalAtomTypeSchema, LOCAL_ATOM_TYPES } from '../contracts/wire.ts';
 import { DeterministicError, TransientError } from '../lib/errors.ts';
 import { readLocalBearer } from '../lib/secrets.ts';
 import { resolveEnv } from '../lib/env.ts';
@@ -281,6 +281,16 @@ export class LocalProvider implements MemoryProvider {
   }
 
   async remember(req: IngestPayload, signal?: AbortSignal): Promise<void> {
+    // U3c-plugin (#38/#44): the local daemon has no writer for the cloud-only
+    // memory types (preference/task_result/summary). Reject them at the
+    // boundary so they fail fast with a clear, non-retriable error instead of
+    // 422/collapsing server-side.
+    if (!LocalAtomTypeSchema.safeParse(req.type).success) {
+      throw new DeterministicError(
+        `local daemon has no writer for memory type '${req.type}' — local types: ${LOCAL_ATOM_TYPES.join(', ')}`,
+        422,
+      );
+    }
     const headers = await buildHeaders();
     const res = await fetchWithTimeout(
       `${this.baseUrl}/remember`,

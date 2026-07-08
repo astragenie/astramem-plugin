@@ -23,7 +23,8 @@ vi.mock('../../src/lib/datadir.ts', () => ({
 import { LocalProvider } from '../../src/providers/local.ts';
 import { runProviderContract, SAMPLE_INGEST, SAMPLE_RECALL } from './_contract.ts';
 import { DeterministicError, TransientError } from '../../src/lib/errors.ts';
-import { WIRE_VERSION } from '../../src/contracts/wire.ts';
+import { WIRE_VERSION, MemoryTypeSchema, LOCAL_ATOM_TYPES } from '../../src/contracts/wire.ts';
+import type { IngestPayload } from '../../src/contracts/wire.ts';
 
 // Captured once at module load, before any test mutates globalThis.setTimeout
 // (e.g. via vi.useFakeTimers()/vi.useRealTimers() or manual spy wrapping) —
@@ -98,6 +99,46 @@ describe('LocalProvider — bearer from MEMORY_BEARER env', () => {
     const provider = new LocalProvider('http://127.0.0.1:19999');
     // Should not throw — just makes an unauthenticated request.
     await expect(provider.recall(SAMPLE_RECALL)).resolves.toBeDefined();
+  });
+});
+
+describe('LocalProvider — local memory-type narrowing (#38/#44)', () => {
+  let origFetch: typeof globalThis.fetch;
+  let postedTo: string | undefined;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    postedTo = undefined;
+    globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+      postedTo = typeof input === 'string' ? input : input.toString();
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  const payload = (type: string): IngestPayload => ({ id: 'x', type, text: 'hi' } as unknown as IngestPayload);
+
+  it.each(['preference', 'task_result', 'summary'])(
+    'rejects cloud-only type %s with a DeterministicError before any network call',
+    async (type) => {
+      const provider = new LocalProvider('http://127.0.0.1:19999');
+      await expect(provider.remember(payload(type))).rejects.toBeInstanceOf(DeterministicError);
+      expect(postedTo).toBeUndefined();
+    },
+  );
+
+  it.each([...LOCAL_ATOM_TYPES])('accepts local type %s and POSTs to /remember', async (type) => {
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.remember(payload(type));
+    expect(postedTo).toMatch(/\/remember$/);
+  });
+
+  it('every LOCAL_ATOM_TYPES value is a member of the canonical memory-type union (no drift)', () => {
+    const canonical = new Set(MemoryTypeSchema.options);
+    for (const t of LOCAL_ATOM_TYPES) expect(canonical.has(t)).toBe(true);
   });
 });
 
