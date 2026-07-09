@@ -1,0 +1,64 @@
+name: Auto-merge on green
+
+# Hands-off merge policy (public-repo variant). Every non-draft, same-repo PR
+# is armed for auto-merge, so GitHub squash-merges it the instant the main
+# ruleset's required status check passes.
+#
+# Escape hatch: add a `hold` or `do-not-merge` label to block a PR.
+#
+# Runs on ubuntu-latest: this is a PUBLIC repo, which cannot use the org
+# self-hosted runner group (fork-PR RCE risk), and public repos get free
+# unlimited GitHub-hosted minutes. Fork PRs get a read-only token so the
+# enable mutation no-ops for them — by design, external PRs still get a
+# human before they can reach main.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Arm or disarm auto-merge
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const held = pr.labels.some(l => ['hold', 'do-not-merge'].includes(l.name));
+
+            if (pr.draft || held) {
+              core.info(`#${pr.number} is ${pr.draft ? 'draft' : 'held'} — disabling auto-merge.`);
+              try {
+                await github.graphql(
+                  `mutation($id: ID!) {
+                     disablePullRequestAutoMerge(input: { pullRequestId: $id }) { clientMutationId }
+                   }`,
+                  { id: pr.node_id }
+                );
+              } catch (e) {
+                core.info(`disable no-op: ${e.message}`);
+              }
+              return;
+            }
+
+            core.info(`Arming squash auto-merge on #${pr.number}.`);
+            try {
+              await github.graphql(
+                `mutation($id: ID!) {
+                   enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH }) { clientMutationId }
+                 }`,
+                { id: pr.node_id }
+              );
+              core.info('Auto-merge enabled — will merge when required checks pass.');
+            } catch (e) {
+              core.warning(`enable auto-merge failed (expected for fork PRs): ${e.message}`);
+            }
