@@ -52,6 +52,29 @@ if [ "${ASTRAMEM_HOOK_DEBUG:-}" = "1" ]; then
   fi
 fi
 
+# issue #394: at-close capture. The subagent transcript (.agent_transcript_path)
+# is frequently deleted by subagent/worktree cleanup before the deferred
+# ingest-transcript read runs, starving ingest ("transcript file not found").
+# Prefer the daemon's `astramem-local capture claude` CLI, which reads the .jsonl
+# NOW (guaranteed live) and atomic-writes it to the daemon's durable ingest-spool
+# (idempotency-keyed, survives daemon-down). Falls back to the legacy deferred
+# ingest-transcript path when the capture subcommand isn't installed yet
+# (astramem-local ships it in the FEAT-449 daemon release).
+# Bound the capture call so a hung daemon CLI can never block session close
+# (fire-and-forget contract). timeout exit 124 -> non-zero -> clean fallthrough.
+CAPTURE_TIMEOUT=""
+command -v timeout >/dev/null 2>&1 && CAPTURE_TIMEOUT="timeout 5"
+if [ -n "$TRANSCRIPT_PATH" ] && command -v astramem-local >/dev/null 2>&1; then
+  if [ "${ASTRAMEM_HOOK_DEBUG:-}" = "1" ]; then
+    if $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop >&2; then
+      exit 0
+    fi
+  elif $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop >/dev/null 2>&1; then
+    exit 0
+  fi
+fi
+
+# Fallback: legacy deferred path read (pre-FEAT-449 daemon / capture unavailable).
 ARGS=(
   ingest-transcript
   --event subagent_stop
