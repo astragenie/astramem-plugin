@@ -9,12 +9,6 @@
 #     to the CLI (the CLI does its own path.resolve() but belt-and-suspenders here)
 #   - ASTRAMEM_HOOK_DEBUG=1: print resolved path + parent-dir listing to stderr
 #     (redirected to /dev/null in normal operation; unset to expose)
-#
-# issue #33: project scope is no longer derived here via `basename $CWD` — that
-# duplicated (and could drift from) the CLI's own default resolution. We pass
-# --cwd through and let `astramem ingest-transcript` resolve the default project
-# via resolveProject() (src/lib/project.ts), which is the single source of truth
-# for every call site (remember/recall/ingest-transcript + all hook shims).
 set +e
 set -u
 
@@ -34,8 +28,12 @@ AGENT_TYPE="$(printf '%s' "$PAYLOAD" | jq -r '.agent_type // empty')"
 if [ -n "$TRANSCRIPT_PATH" ]; then
   TRANSCRIPT_PATH="${TRANSCRIPT_PATH//\\//}"
 fi
+
+# project_id = basename of cwd (matches existing project_id convention)
 if [ -n "$CWD" ]; then
-  CWD="${CWD//\\//}"
+  PROJECT_ID="$(basename "$CWD")"
+else
+  PROJECT_ID="$(basename "$PWD")"
 fi
 
 # Debug logging: export ASTRAMEM_HOOK_DEBUG=1 to surface path resolution info.
@@ -60,12 +58,16 @@ fi
 # (idempotency-keyed, survives daemon-down). Falls back to the legacy deferred
 # ingest-transcript path when the capture subcommand isn't installed yet
 # (astramem-local ships it in the FEAT-449 daemon release).
+# Bound the capture call so a hung daemon CLI can never block session close
+# (fire-and-forget contract). timeout exit 124 -> non-zero -> clean fallthrough.
+CAPTURE_TIMEOUT=""
+command -v timeout >/dev/null 2>&1 && CAPTURE_TIMEOUT="timeout 5"
 if [ -n "$TRANSCRIPT_PATH" ] && command -v astramem-local >/dev/null 2>&1; then
   if [ "${ASTRAMEM_HOOK_DEBUG:-}" = "1" ]; then
-    if astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop >&2; then
+    if $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop >&2; then
       exit 0
     fi
-  elif astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop >/dev/null 2>&1; then
+  elif $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop >/dev/null 2>&1; then
     exit 0
   fi
 fi
@@ -75,6 +77,7 @@ ARGS=(
   ingest-transcript
   --event subagent_stop
   --session-id "$SESSION_ID"
+  --project-id "$PROJECT_ID"
 )
 [ -n "$TRANSCRIPT_PATH" ] && ARGS+=(--transcript-path "$TRANSCRIPT_PATH")
 [ -n "$CWD" ] && ARGS+=(--cwd "$CWD")

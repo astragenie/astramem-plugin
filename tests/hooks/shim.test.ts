@@ -12,8 +12,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { join, delimiter } from 'node:path';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 // ---------------------------------------------------------------------------
 // Platform guard — skip if bash not available on Win32
@@ -93,6 +94,51 @@ function loadFixtureStdin(fixturePath: string): string {
   return readFileSync(join(fixturePath, 'hook-stdin.json'), 'utf-8');
 }
 
+// issue #394: build a throwaway bin dir with fake `astramem-local` + `bun` on PATH.
+// - astramem-local writes a "capture" marker and exits with `captureExit` on `capture claude`.
+// - bun writes a "bun" marker (proves the legacy ingest path ran) and exits 0.
+// Lets us assert capture-success skips legacy (no double-ingest) and capture-failure
+// falls through to legacy exactly once.
+interface FakeBin {
+  binDir: string;
+  capturedMarker: string;
+  legacyMarker: string;
+  pathEnv: string;
+  cleanup: () => void;
+}
+function makeFakeBin(captureExit: number): FakeBin {
+  const root = mkdtempSync(join(tmpdir(), 'astramem-hook-fake-'));
+  const binDir = join(root, 'bin');
+  const markerDir = join(root, 'markers');
+  mkdirSync(binDir, { recursive: true });
+  mkdirSync(markerDir, { recursive: true });
+  const capturedMarker = join(markerDir, 'capture');
+  const legacyMarker = join(markerDir, 'bun');
+  writeFileSync(
+    join(binDir, 'astramem-local'),
+    `#!/usr/bin/env bash\nif [ "$1" = "capture" ]; then printf '%s\\n' "$*" > "${capturedMarker.replace(/\\/g, '/')}"; exit ${captureExit}; fi\nexit 0\n`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(binDir, 'bun'),
+    `#!/usr/bin/env bash\nprintf '%s\\n' "$*" > "${legacyMarker.replace(/\\/g, '/')}"\nexit 0\n`,
+    { mode: 0o755 },
+  );
+  return {
+    binDir,
+    capturedMarker,
+    legacyMarker,
+    pathEnv: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+function subagentPayload(): string {
+  const fixturePath = join(FIXTURE_ROOT, 'subagent_stop', '01-basic');
+  const transcriptPath = join(fixturePath, 'transcript.jsonl').replace(/\\/g, '/');
+  return loadFixtureStdin(fixturePath).replace(/__FIXTURE_TRANSCRIPT_PATH__/g, transcriptPath);
+}
+
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
@@ -120,6 +166,33 @@ describe.skipIf(skipOnWin32)('hook shim exit-code + secret-leak gate (FEAT 4a Sl
     const r = runShim('subagent-stop-capture.sh', '');
     expect(r.exitCode).toBe(0);
     assertNoSecretLeak(r);
+  });
+
+  // issue #394: at-close capture prefers `astramem-local capture claude`.
+  it('subagent-stop-capture.sh: capture success skips legacy ingest (no double-ingest)', () => {
+    const fake = makeFakeBin(0);
+    try {
+      const r = runShim('subagent-stop-capture.sh', subagentPayload(), { PATH: fake.pathEnv });
+      expect(r.exitCode).toBe(0);
+      expect(existsSync(fake.capturedMarker)).toBe(true); // capture ran
+      expect(existsSync(fake.legacyMarker)).toBe(false); // legacy skipped
+      assertNoSecretLeak(r);
+    } finally {
+      fake.cleanup();
+    }
+  });
+
+  it('subagent-stop-capture.sh: capture failure falls through to legacy exactly once', () => {
+    const fake = makeFakeBin(1);
+    try {
+      const r = runShim('subagent-stop-capture.sh', subagentPayload(), { PATH: fake.pathEnv });
+      expect(r.exitCode).toBe(0);
+      expect(existsSync(fake.capturedMarker)).toBe(true); // capture attempted
+      expect(existsSync(fake.legacyMarker)).toBe(true); // fell through to legacy
+      assertNoSecretLeak(r);
+    } finally {
+      fake.cleanup();
+    }
   });
 
   // -------------------------------------------------------------------------
