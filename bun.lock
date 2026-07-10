@@ -5,7 +5,8 @@
     "": {
       "name": "@astragenie/astramem-plugin",
       "dependencies": {
-        "zod": "^3.23.0",
+        "@astragenie/astramem-contracts": "2.1.0",
+        "zod": "^4.4.3",
       },
       "devDependencies": {
         "@types/node": "^20.0.0",
@@ -16,6 +17,8 @@
     },
   },
   "packages": {
+    "@astragenie/astramem-contracts": ["@astragenie/astramem-contracts@2.1.0", "", { "peerDependencies": { "zod": "^4.4.3" }, "optionalPeers": ["zod"] }, "sha512-rS1y1K4OZXPYqSk2wDgi9bb0nJKFvoxyXEwXoz0ZYm/2o9CgZBhC5KkOlOmvYxRh68VpXgpUaO3gzQSczkbSIg=="],
+
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.21.5", "", { "os": "aix", "cpu": "ppc64" }, "sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ=="],
 
     "@esbuild/android-arm": ["@esbuild/android-arm@0.21.5", "", { "os": "android", "cpu": "arm" }, "sha512-vCPvzSjpPHEi1siZdlvAlsPxXl7WbOVUBBAowWug4rJHb68Ox8KualB+1ocNvT5fjv6wpkX6o/iEpbDrf68zcg=="],
@@ -206,6 +209,6 @@
 
     "why-is-node-running": ["why-is-node-running@2.3.0", "", { "dependencies": { "siginfo": "^2.0.0", "stackback": "0.0.2" }, "bin": { "why-is-node-running": "cli.js" } }, "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w=="],
 
-    "zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
+    "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
   }
 }

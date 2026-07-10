@@ -1,19 +1,19 @@
 {
   "version": "1.0",
-  "updatedAt": "2026-06-27T10:06:55.063Z",
+  "updatedAt": "2026-07-07T12:51:18.329Z",
   "currentRun": {
     "title": "Wave 2 fan-out TS review",
     "goal": "",
     "mode": "",
     "status": "active",
     "startedAt": "2026-06-27T08:47:33.621Z",
-    "updatedAt": "2026-06-27T10:06:55.063Z",
-    "next": "",
+    "updatedAt": "2026-07-07T12:51:18.329Z",
+    "next": "Before any caller starts passing a live signal into these providers/selector: (1) fix linkSignals' manual-merge fallback to remove its listeners once the combined signal is no longer needed (e.g. via an internal AbortController tied to fetch completion, not just once:true on the abort event), and add a fallback-path test that stubs AbortSignal.any away; (2) add a signal?.aborted early-return check before the retry attempt in LocalProvider/SaasProvider ingest() and ingestTranscript(), with a regression test asserting no second attemptIngest call fires after caller abort.",
     "gates": {
       "review": {
         "status": "passed",
-        "updatedAt": "2026-06-27T10:06:55.063Z",
-        "note": "Codebase is type-safe and structurally sound; three medium findings (teardown race, doc drift, noUncheckedIndexedAccess gap) require followup before stable release but do not block v0.1.0-rc.1."
+        "updatedAt": "2026-07-07T12:51:18.329Z",
+        "note": "Issue #29 abort/unref plumbing is correct and backward-compatible (tsc clean, 175/175 tests green, no live caller regression); two MEDIUM latent defects found in currently-dead code paths that will bite the first time a caller actually passes a signal."
       },
       "validation": null,
       "deployment": {
@@ -25,8 +25,11 @@
     },
     "artifacts": {
       "runBrief": null,
-      "handoffs": [],
-      "reviewResult": "C:\\work\\mega\\astramemory-plugin\\.claude\\artifacts\\crew\\reviews\\20260627T095913Z-review-result-v0-1-0-rc-1-final-ts-review.md",
+      "handoffs": [
+        "C:\\work\\mega\\astramemory-plugin\\.claude\\artifacts\\crew\\handoffs\\20260704T080631Z-handoff-slice-2-test-plan-fact-check-envelope-tests-daemon-spawn-pre.md",
+        "C:\\work\\mega\\astramemory-plugin\\.claude\\artifacts\\crew\\handoffs\\20260704T085119Z-handoff-astramem-plugin-wire-mcp-env-contract-inventory.md"
+      ],
+      "reviewResult": ".claude/artifacts/crew/reviews/20260707T124716Z-review-result-issue-29-abort-signal-review.md",
       "validationPlan": null,
       "validationResult": null,
       "deploymentChecks": {

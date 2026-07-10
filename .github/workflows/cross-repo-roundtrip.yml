@@ -37,6 +37,9 @@ jobs:
     name: cross-repo-roundtrip
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
     steps:
       # Job-level `if:` cannot see the `secrets` context (only step-level can),
       # so gating is done via a first step that resolves presence into a step
@@ -84,11 +87,11 @@ jobs:
         shell: bash
         run: |
           {
-            echo "@astragenie:registry=https://npm.pkg.github.com"
-            echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}"
-          } >> "$HOME/.npmrc"
+            echo "@astragenie:registry=https://registry.npmjs.org"
+            echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}"
+          } | tee -a "$HOME/.npmrc" "$GITHUB_WORKSPACE/.npmrc" "$GITHUB_WORKSPACE/daemon/.npmrc" >/dev/null
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.ASTRAMEM_LOCAL_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install + build daemon
         if: steps.check-secret.outputs.has-token == 'true'

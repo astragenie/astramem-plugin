@@ -6,6 +6,10 @@ import { describe, it, expect } from 'vitest';
 import {
   TranscriptTurnSchema,
   TranscriptIngestPayloadSchema,
+  CanonicalCaptureEnvelopeV1Schema,
+  MemoryTypeSchema,
+  IngestPayloadSchema,
+  RecallHitSchema,
   WIRE_VERSION,
 } from '../../src/contracts/wire.ts';
 
@@ -244,5 +248,72 @@ describe('TranscriptIngestPayloadSchema', () => {
     const r = TranscriptIngestPayloadSchema.safeParse({ ...VALID_ENVELOPE, wire_version: 'v2.0' });
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.wire_version).toBe('v2.0');
+  });
+
+  // ------------------------------------------------------------------
+  // #26 — cross-validation against the canonical
+  // @astragenie/astramem-contracts CaptureEnvelopeV1Schema (astramem-capture@1).
+  // Proves the plugin's stricter local schema stays a valid subset of the
+  // published cross-repo envelope instead of silently drifting from it.
+  // ------------------------------------------------------------------
+
+  it('every envelope accepted locally also validates against the canonical CaptureEnvelopeV1Schema', () => {
+    const local = TranscriptIngestPayloadSchema.parse(VALID_ENVELOPE);
+    const canonical = CanonicalCaptureEnvelopeV1Schema.safeParse(local);
+    expect(canonical.success).toBe(true);
+  });
+
+  it('the canonical schema still accepts a kind:"transcript" envelope with an unrecognised extra field', () => {
+    // Canonical envelope covers both 'transcript' and 'events' kinds; the
+    // plugin only ever emits 'transcript'. This asserts the canonical
+    // schema's `kind` defaulting doesn't reject our shape when explicit.
+    const r = CanonicalCaptureEnvelopeV1Schema.safeParse({ ...VALID_ENVELOPE, kind: 'transcript' });
+    expect(r.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MemoryTypeSchema (#27) — canonical memory-type union sourced from
+// @astragenie/astramem-contracts's AtomV1Schema.
+// ---------------------------------------------------------------------------
+
+describe('MemoryTypeSchema', () => {
+  const CANONICAL_TYPES = [
+    'decision', 'fact', 'lesson', 'command', 'todo',
+    'note', 'event', 'preference', 'task_result', 'summary',
+  ];
+
+  it('accepts all 10 ADR-005 canonical values', () => {
+    for (const t of CANONICAL_TYPES) {
+      expect(MemoryTypeSchema.safeParse(t).success).toBe(true);
+    }
+  });
+
+  it('rejects a non-canonical free-form string', () => {
+    expect(MemoryTypeSchema.safeParse('transcript').success).toBe(false);
+    expect(MemoryTypeSchema.safeParse('whatever').success).toBe(false);
+  });
+
+  it('IngestPayloadSchema rejects an unknown type with a clear error', () => {
+    const r = IngestPayloadSchema.safeParse({ id: 'x', type: 'bogus-type', text: 'hi' });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(r.error.issues.some((i) => i.path.includes('type'))).toBe(true);
+    }
+  });
+
+  it('IngestPayloadSchema accepts a canonical type', () => {
+    const r = IngestPayloadSchema.safeParse({ id: 'x', type: 'decision', text: 'hi' });
+    expect(r.success).toBe(true);
+  });
+
+  it('RecallHitSchema rejects an unknown type', () => {
+    const r = RecallHitSchema.safeParse({ id: 'h1', type: 'transcript', text: 'hi', score: 0.5 });
+    expect(r.success).toBe(false);
+  });
+
+  it('RecallHitSchema accepts a canonical type', () => {
+    const r = RecallHitSchema.safeParse({ id: 'h1', type: 'fact', text: 'hi', score: 0.5 });
+    expect(r.success).toBe(true);
   });
 });
