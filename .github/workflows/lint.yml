@@ -17,17 +17,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      # See test.yml — @astragenie/astramem-contracts is a private GitHub
-      # Packages dependency; without this auth, bun install 401s.
-      - name: Configure GitHub Packages auth
+      # See test.yml — @astragenie/astramem-contracts is PUBLIC on npmjs; pin the
+      # scope to npmjs so a runner-global ~/.npmrc can't shadow it. No auth.
+      - name: Point @astragenie scope at npmjs (contracts is public)
         shell: bash
-        run: |
-          {
-            echo "@astragenie:registry=https://npm.pkg.github.com"
-            echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}"
-          } >> .npmrc
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "@astragenie:registry=https://registry.npmjs.org" >> .npmrc
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Type-check

@@ -78,20 +78,16 @@ jobs:
         with:
           bun-version: '1.3'
 
-      # Both the daemon and the plugin depend on the private
-      # @astragenie/astramem-contracts package on GitHub Packages. Write auth to
-      # $HOME/.npmrc (not a repo-local one) so it applies to both installs
-      # regardless of working-directory.
-      - name: Configure GitHub Packages auth
+      # Both the daemon and the plugin depend on @astragenie/astramem-contracts,
+      # which is PUBLIC on npmjs.org — no auth needed. Pin the @astragenie scope
+      # to npmjs across every .npmrc the two installs read (repo-local, daemon,
+      # and $HOME) so a runner-global scope->GitHub-Packages can't shadow it.
+      - name: Point @astragenie scope at npmjs (contracts is public)
         if: steps.check-secret.outputs.has-token == 'true'
         shell: bash
         run: |
-          {
-            echo "@astragenie:registry=https://npm.pkg.github.com"
-            echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}"
-          } | tee -a "$HOME/.npmrc" "$GITHUB_WORKSPACE/.npmrc" "$GITHUB_WORKSPACE/daemon/.npmrc" >/dev/null
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "@astragenie:registry=https://registry.npmjs.org" \
+            | tee -a "$HOME/.npmrc" "$GITHUB_WORKSPACE/.npmrc" "$GITHUB_WORKSPACE/daemon/.npmrc" >/dev/null
 
       - name: Install + build daemon
         if: steps.check-secret.outputs.has-token == 'true'

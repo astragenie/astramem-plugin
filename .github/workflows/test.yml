@@ -38,20 +38,13 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ matrix.bun-version }}
-      # The plugin depends on the private @astragenie/astramem-contracts package
-      # on GitHub Packages. Without registry auth, `bun install` 401s and every
-      # job dies at install. Write an .npmrc scoping @astragenie to the GitHub
-      # Packages registry with a token. `shell: bash` so the heredoc + env
-      # expansion behave identically on the windows-latest runner.
-      - name: Configure GitHub Packages auth
+      # @astragenie/astramem-contracts is PUBLIC on npmjs.org — no auth needed.
+      # Pin the @astragenie scope to npmjs so a runner-global ~/.npmrc that
+      # points the scope at GitHub Packages can't shadow it (repo-local .npmrc
+      # wins for a cwd install). `shell: bash` for windows-runner parity.
+      - name: Point @astragenie scope at npmjs (contracts is public)
         shell: bash
-        run: |
-          {
-            echo "@astragenie:registry=https://npm.pkg.github.com"
-            echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}"
-          } >> .npmrc
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "@astragenie:registry=https://registry.npmjs.org" >> .npmrc
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Type-check
