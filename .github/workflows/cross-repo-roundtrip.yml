@@ -37,6 +37,9 @@ jobs:
     name: cross-repo-roundtrip
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
     steps:
       # Job-level `if:` cannot see the `secrets` context (only step-level can),
       # so gating is done via a first step that resolves presence into a step
