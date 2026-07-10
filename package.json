@@ -29,7 +29,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@astragenie/astramem-contracts": "2.1.0",
+    "@astragenie/astramem-contracts": "2.1.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
