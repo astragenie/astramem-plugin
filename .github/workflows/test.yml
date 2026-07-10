@@ -1,6 +1,7 @@
-# Cross-OS CI for FEAT-4a v0.5.0 — Ubuntu/macOS/Windows × Bun '1.3'.
+# Cross-OS CI for FEAT-4a v0.5.0 — Ubuntu/Windows × Bun '1.3'.
 # Triggered on every push + PRs to main. Stage 4 of plugin Phase 3.
-# Matrix: os (ubuntu-latest, macos-latest, windows-latest) × bun-version ('1.3').
+# Matrix: os (ubuntu-latest, windows-latest) × bun-version ('1.3').
+# macOS dropped 2026-07-09 — 10x hosted-minute multiplier, guarded org-wide.
 # Pinned per R10 architect review — 'latest' auto-update was #1 6-month footgun for Windows subprocess handling.
 # Gates commits: 06d20a8 (wire_version), 4db957f (doctor), 5fb99e6 (wire-flow E2E).
 
@@ -21,7 +22,31 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Docs-only fast-path (public repo -> ubuntu-latest helpers).
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        shell: bash
+        run: |
+          set -uo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then base="HEAD~1"; fi
+          changed=$(git diff --name-only "$base" HEAD || echo "UNKNOWN")
+          echo "$changed"
+          if [ -z "$changed" ]; then echo "code=true" >> "$GITHUB_OUTPUT"
+          elif echo "$changed" | grep -qvE '(^docs/|\.md$|/backlog/|^\.github/backlog/)'; then echo "code=true" >> "$GITHUB_OUTPUT"
+          else echo "docs-only"; echo "code=false" >> "$GITHUB_OUTPUT"; fi
+
   bun-tests:
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     name: Tests (bun ${{ matrix.bun-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -31,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
         bun-version: ['1.3']
     steps:
       - uses: actions/checkout@v4
@@ -51,10 +76,26 @@ jobs:
             echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}"
           } >> .npmrc
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.ASTRAMEM_LOCAL_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Type-check
         run: bun run typecheck
       - name: Run tests
         run: bun run test
+
+  # Required check. Always runs; passes on docs-only or when bun-tests succeeded.
+  gate:
+    name: gate
+    needs: [changes, bun-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - shell: bash
+        run: |
+          set -uo pipefail
+          code='${{ needs.changes.outputs.code }}'; t='${{ needs.bun-tests.result }}'
+          echo "code=$code bun-tests=$t"
+          if [ "$code" != "true" ]; then echo "docs-only -- pass"; exit 0; fi
+          if [ "$t" = "success" ]; then echo "tests passed"; exit 0; fi
+          echo "bun-tests=$t -- fail"; exit 1
