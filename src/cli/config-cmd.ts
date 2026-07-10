@@ -90,5 +90,6 @@ Examples:
   astramem config get local.url
   astramem config set local.url http://127.0.0.1:7777
   astramem config set provider local
+  astramem config set project my-project
   astramem config unset saas.bearer
 `;

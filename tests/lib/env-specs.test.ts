@@ -153,6 +153,25 @@ describe('ENV.sessionEndMaxChars', () => {
 });
 
 // ---------------------------------------------------------------------------
+// profileMaxChars
+// ---------------------------------------------------------------------------
+
+describe('ENV.profileMaxChars', () => {
+  it('returns default 600 when nothing is set', () => {
+    const result = resolveEnv(ENV.profileMaxChars);
+    expect(result.source).toBe('default');
+    expect(result.value).toBe('600');
+  });
+
+  it('resolves canonical MEMORY_PROFILE_MAX_CHARS', () => {
+    vi.stubEnv('MEMORY_PROFILE_MAX_CHARS', '0');
+    const result = resolveEnv(ENV.profileMaxChars);
+    expect(result.source).toBe('canonical');
+    expect(result.value).toBe('0');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // provider
 // ---------------------------------------------------------------------------
 

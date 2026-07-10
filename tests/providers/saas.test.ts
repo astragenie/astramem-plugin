@@ -115,7 +115,7 @@ describe('SaasProvider — SaaS route + wire mapping (FEAT 4a §4.2.4)', () => {
     expect(res.total_searched).toBe(100);
     expect(res.hits[0]).toMatchObject({
       id: '00000000-0000-0000-0000-000000000001',
-      type: 'transcript',
+      type: 'note',
       text: 'relevant memory',
       score: 0.91,
     });
@@ -146,6 +146,21 @@ describe('SaasProvider — SaaS route + wire mapping (FEAT 4a §4.2.4)', () => {
     });
     expect(capturedBody?.['project_id']).toBe('explicit-proj');
     expect((capturedBody?.['metadata'] as Record<string, unknown>)['client_id']).toBe(SAMPLE_INGEST.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// capabilities (#26)
+// ---------------------------------------------------------------------------
+
+describe('SaasProvider — capabilities (#26)', () => {
+  it('reports multi-tenant, no as_of, no explain signals', () => {
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    expect(provider.capabilities).toEqual({
+      tenancy: 'multi',
+      asOf: false,
+      explainSignals: [],
+    });
   });
 });
 
@@ -483,5 +498,193 @@ describe('SaasProvider — bearer not logged on error paths', () => {
     expect(errMsg).toMatch(/recall: 401/);
     // No console output with auth header either.
     expect(capturedMessages.join('')).not.toContain('Bearer');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #29 — internal deadline timers not unref()'d + no external AbortSignal.
+// Mirrors the LocalProvider coverage in tests/providers/local.test.ts — the
+// two providers duplicate fetchWithTimeout by design (see saas.ts header
+// comment), so both copies need the same fix verified independently.
+// ---------------------------------------------------------------------------
+describe('SaasProvider — internal timer unref + external AbortSignal (issue #29)', () => {
+  let origFetch: typeof globalThis.fetch;
+  let origSetTimeout: typeof globalThis.setTimeout;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    origSetTimeout = globalThis.setTimeout;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+    globalThis.setTimeout = origSetTimeout;
+    vi.useRealTimers();
+  });
+
+  it('AC-1: unref()s the internal deadline timer so it cannot keep the event loop alive on its own', async () => {
+    const unrefSpy = vi.fn();
+    globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      const timer = origSetTimeout(fn, ms, ...args);
+      const originalUnref = (timer as unknown as { unref?: () => unknown }).unref?.bind(timer);
+      (timer as unknown as { unref: () => unknown }).unref = () => {
+        unrefSpy();
+        return originalUnref?.();
+      };
+      return timer;
+    }) as typeof setTimeout;
+
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    ) as typeof fetch;
+
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    await provider.health();
+
+    expect(unrefSpy).toHaveBeenCalled();
+  });
+
+  it('AC-2: an external AbortSignal shorter than the internal timeout aborts the request early', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        // Mirrors real fetch() semantics: check the already-aborted case
+        // synchronously (covers the race where ctrl.abort() below fires
+        // before this mock even runs), then listen for a future abort event.
+        if (capturedSignal?.aborted) {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+          return;
+        }
+        capturedSignal?.addEventListener('abort', () => {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+        });
+      });
+    }) as typeof fetch;
+
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    const ctrl = new AbortController();
+    const pending = provider.recall(SAMPLE_RECALL, ctrl.signal);
+    ctrl.abort();
+
+    const err = await pending.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientError);
+    expect((err as TransientError).kind).toBe('transient');
+    expect((err as Error).message).toMatch(/caller/i);
+  });
+
+  it('AC-4: an already-aborted external signal rejects immediately', async () => {
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted) {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+          return;
+        }
+      });
+    }) as typeof fetch;
+
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    const alreadyAborted = AbortSignal.timeout(0);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const start = Date.now();
+    const err = await provider.recall(SAMPLE_RECALL, alreadyAborted).catch((e: unknown) => e);
+    const elapsedMs = Date.now() - start;
+
+    expect(elapsedMs).toBeLessThan(500);
+    expect(err).toBeInstanceOf(TransientError);
+    expect((err as Error).message).toMatch(/caller/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review finding #2 (issue #29 APPROVED_WITH_NOTES) — the ingest()/
+// ingestTranscript() retry-once-on-TransientError path fired the retry
+// unconditionally, even when the caller's own signal had already aborted.
+// A caller that gave up should not cause a second network attempt.
+// ---------------------------------------------------------------------------
+describe('SaasProvider — retry skips when caller signal is already aborted (review finding #2)', () => {
+  let origFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  it('ingest(): does not retry when signal is already aborted before the first attempt', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      fetchCallCount++;
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted) {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+          return;
+        }
+      });
+    }) as typeof fetch;
+
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    const ctrl = new AbortController();
+    ctrl.abort();
+
+    await provider.ingest(SAMPLE_INGEST, ctrl.signal);
+
+    expect(fetchCallCount).toBe(1);
+  });
+
+  it('ingest(): retries exactly once as before when signal is undefined and a 5xx occurs (no regression)', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+      fetchCallCount++;
+      return new Response('{"error":"server error"}', {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    await provider.ingest(SAMPLE_INGEST);
+
+    expect(fetchCallCount).toBe(2);
+  });
+
+  it('ingestTranscript(): does not retry when signal is already aborted before the first attempt', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      fetchCallCount++;
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted) {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+          return;
+        }
+      });
+    }) as typeof fetch;
+
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    const ctrl = new AbortController();
+    ctrl.abort();
+
+    await provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD, ctrl.signal);
+
+    expect(fetchCallCount).toBe(1);
+  });
+
+  it('ingestTranscript(): retries exactly once as before when signal is undefined and a 5xx occurs (no regression)', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+      fetchCallCount++;
+      return new Response('{"error":"server error"}', {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    await provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD);
+
+    expect(fetchCallCount).toBe(2);
   });
 });

@@ -1,0 +1,47 @@
+# Task Handoff: astramem-plugin wire/MCP/env contract inventory
+
+- Created: 2026-07-04T08:51:19.480Z
+- From: researcher
+- To: dispatcher
+- Objective: Plugin sends TranscriptIngestPayload/IngestPayload/RecallRequest via raw fetch to /ingest/transcript, /recall, /remember, /health with Zod-validated shapes; owns zero MCP tool-call code (the astramem MCP server is a pure HTTP passthrough to ${MEMORY_API_URL}/mcp) — cloud-only tool names (search_memory, invalidate_memory, etc.) are backend-defined, not referenced in plugin TS source.
+- Allowed Scope:
+  - Read-only grep+read across src/
+  - lib/
+  - bin/
+  - hooks/
+  - .mcp.json in astramemory-plugin for HTTP calls
+  - MCP usage
+  - env vars
+  - memory types
+  - ingest/recall shapes
+  - error handling
+  - versioning
+  - auth
+- Forbidden Scope: -
+- Deliverable: 9-section file:line contract inventory returned inline to dispatcher (see chat transcript); no files written
+- Changed Files:
+  - src/providers/saas.ts
+  - src/providers/local.ts
+  - src/contracts/wire.ts
+  - src/contracts/provider.ts
+  - src/contracts/selector.ts
+  - src/contracts/config.ts
+  - src/lib/selector.ts
+  - src/lib/env-specs.ts
+  - src/lib/secrets.ts
+  - src/lib/errors.ts
+  - src/cli/recall.ts
+  - src/cli/remember.ts
+  - src/cli/ingest-transcript.ts
+  - src/cli/health.ts
+  - src/cli/doctor.ts
+  - src/cli/connect.ts
+  - lib/clerkAuthFile.ts
+  - .mcp.json
+  - hooks/hooks.json
+  - hooks/scripts/session-end-summary.sh
+  - .claude-plugin/plugin.json
+- Confidence: high
+- Risks: Did not inspect tests/e2e/* fixtures for additional wire-shape assumptions; did not check bin/*.ts entrypoint dispatch table for subcommand completeness (only inferred from src/cli/*); local daemon's actual /register, /recall, /remember, /health response shapes were NOT verified against this plugin's expectations (that requires reading the astramemory-local repo, out of scope here); same for cloud SaaS controllers in C:\work\mega\memory — only the code comments in saas.ts assert the mapping, not independently verified against live controller code in this pass
+- Suggested Next Handoff: Cross-check src/providers/saas.ts's documented endpoint map (POST /ingest/transcript, /memories/search, /memories, GET /health, GET /version) and the WIRE BUGS comment (recall()/remember() posting to /recall and /remember instead of /memories/search and POST /memories) against the actual AstraMemory.Api controllers in C:\work\mega\memory\src\AstraMemory.Api\Controllers, and against the astramemory-local daemon's route table, to produce the formal divergence report
+

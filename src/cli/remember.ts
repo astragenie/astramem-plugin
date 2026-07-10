@@ -5,6 +5,7 @@ import { IngestPayloadSchema } from '../contracts/wire.ts';
 import type { Provider } from '../contracts/selector.ts';
 import type { MemoryProvider } from '../contracts/provider.ts';
 import { resolveProvider } from '../lib/selector.ts';
+import { resolveProject } from '../lib/project.ts';
 
 /** Injected opts for tests. */
 export interface RememberOpts {
@@ -27,6 +28,7 @@ export async function runRemember(args: string[], opts: RememberOpts = {}): Prom
   let metadata: Record<string, unknown> = {};
   let project: string | undefined;
   let agent: string | undefined;
+  let cwd: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -55,15 +57,24 @@ export async function runRemember(args: string[], opts: RememberOpts = {}): Prom
         agent = args[i + 1];
         i++;
         break;
+      case '--cwd':
+        cwd = args[i + 1];
+        i++;
+        break;
       default:
         break;
     }
   }
 
+  // issue #33: resolveProject() is the single source of truth for the
+  // default project scope — flag > ASTRAMEM_PROJECT env > config.project >
+  // basename(cwd). Always resolves to a non-empty string.
+  const resolvedProject = resolveProject({ flag: project, cwd });
+
   // FEAT-423: convenience flags fold into metadata (daemon reads
   // metadata.project / metadata.agent → persists on the atom). Explicit
   // --metadata JSON keys win if both are supplied.
-  if (project !== undefined && metadata['project'] === undefined) metadata['project'] = project;
+  if (metadata['project'] === undefined) metadata['project'] = resolvedProject;
   if (agent !== undefined && metadata['agent'] === undefined) metadata['agent'] = agent;
 
   if (!content) {
@@ -100,7 +111,12 @@ export async function runRemember(args: string[], opts: RememberOpts = {}): Prom
 
   try {
     await provider.remember(payload);
-    process.stdout.write('ok\n');
+    // A single remember() call always saves exactly one atom of the parsed
+    // type — structured so callers (and the remember-marker hook shim,
+    // issue #40) can format an inline save marker without re-deriving the
+    // count. See src/lib/save-marker.ts.
+    const result = { ok: true, saved: 1, by_type: { [payload.type]: 1 } };
+    process.stdout.write(`${JSON.stringify(result)}\n`);
     return 0;
   } catch (e) {
     process.stderr.write(`astramem remember: backend error — ${(e as Error).message}\n`);

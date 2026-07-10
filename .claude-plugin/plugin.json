@@ -1,7 +1,7 @@
 {
   "name": "astramem",
   "version": "0.6.1",
-  "description": "Slash commands + auto-capture hooks bridging Claude Code to AstraMemory. Provider selector routes between local and SaaS backends. Bun-native TypeScript CLI. Fail-silent ingest log. Bearer scrubbing at every output sink.",
+  "description": "Slash commands + auto-capture hooks bridging Claude Code to AstraMemory. Provider selector routes between local and SaaS backends. Bun-native TypeScript CLI. Fail-silent ingest log. Bearer scrubbing at every output sink. Exposes 15 MCP tools: search_memory, recall_memory, remember, get_health, why_memory, session_digest, invalidate_memory, supersede_memory, promote_memory, restore_memory, memory_history, mark_memory_used, erase_memory, list_consolidation_proposals, resolve_consolidation_proposal.",
   "author": {
     "name": "astra"
   },

@@ -23,11 +23,18 @@ describe('runRemember', () => {
   beforeEach(() => { cap = captureOutput(); });
   afterEach(() => { cap.restore(); });
 
-  it('returns 0 and prints "ok" on success', async () => {
+  it('returns 0 and prints structured JSON on success (issue #40)', async () => {
     const provider = createMockProvider();
     const code = await runRemember(['--content', 'Decision: use Bun'], { _provider: provider });
     expect(code).toBe(0);
-    expect(cap.stdout.join('')).toMatch(/^ok/);
+    expect(JSON.parse(cap.stdout.join(''))).toEqual({ ok: true, saved: 1, by_type: { fact: 1 } });
+  });
+
+  it('structured JSON reflects the parsed --type (issue #40)', async () => {
+    const provider = createMockProvider();
+    const code = await runRemember(['--content', 'note', '--type', 'lesson'], { _provider: provider });
+    expect(code).toBe(0);
+    expect(JSON.parse(cap.stdout.join(''))).toEqual({ ok: true, saved: 1, by_type: { lesson: 1 } });
   });
 
   it('calls provider.remember with correct payload shape', async () => {
@@ -46,14 +53,34 @@ describe('runRemember', () => {
     expect(arg.type).toBe('fact');
   });
 
-  it('parses --metadata as JSON', async () => {
+  it('parses --metadata as JSON (project default still folds in — issue #33)', async () => {
     const provider = createMockProvider();
     await runRemember(
-      ['--content', 'note', '--metadata', '{"priority":"high"}'],
+      ['--content', 'note', '--metadata', '{"priority":"high"}', '--cwd', '/home/user/projects/my-app'],
       { _provider: provider },
     );
     const arg = provider._stubs.remember.mock.calls[0]![0];
-    expect(arg.metadata).toEqual({ priority: 'high' });
+    expect(arg.metadata).toEqual({ priority: 'high', project: 'my-app' });
+  });
+
+  it('explicit --metadata project key wins over the resolveProject default (issue #33)', async () => {
+    const provider = createMockProvider();
+    await runRemember(
+      ['--content', 'note', '--metadata', '{"project":"explicit-meta"}', '--cwd', '/home/user/projects/my-app'],
+      { _provider: provider },
+    );
+    const arg = provider._stubs.remember.mock.calls[0]![0];
+    expect((arg.metadata as Record<string, unknown>).project).toBe('explicit-meta');
+  });
+
+  it('defaults metadata.project via resolveProject() when --project is not given (issue #33)', async () => {
+    const provider = createMockProvider();
+    await runRemember(
+      ['--content', 'note', '--cwd', '/home/user/projects/another-app'],
+      { _provider: provider },
+    );
+    const arg = provider._stubs.remember.mock.calls[0]![0];
+    expect((arg.metadata as Record<string, unknown>).project).toBe('another-app');
   });
 
   it('folds --project / --agent into metadata (FEAT-423)', async () => {

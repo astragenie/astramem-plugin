@@ -14,10 +14,27 @@ export type Provider = 'local' | 'saas';
  */
 export type SelectorSource = 'flag' | 'env' | 'config' | 'auto' | 'fallback';
 
+/**
+ * A MemoryProvider instance stamped with the backend it was resolved from.
+ * Lets a caller holding only the provider handle (e.g. after destructuring
+ * `const { provider } = await resolveProvider()` and passing `provider`
+ * elsewhere) read which backend it talks to without threading
+ * `SelectorResult.providerName` through separately.
+ */
+export interface ProviderHandle extends MemoryProvider {
+  /** Readonly — set once at resolution time, mirrors SelectorResult.providerName. */
+  readonly backend: Provider;
+}
+
 /** Result returned by the selector after resolution. */
 export interface SelectorResult {
-  provider: MemoryProvider;
-  /** Which provider was chosen. */
+  provider: ProviderHandle;
+  /**
+   * Which provider was chosen. THE supported backend-identity field: prefer
+   * this over introspecting the provider instance when you have a
+   * SelectorResult in hand. (`provider.backend` — see ProviderHandle — covers
+   * the case where only the provider handle itself is available.)
+   */
   providerName: Provider;
   /** How the provider was resolved. */
   source: SelectorSource;

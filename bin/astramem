@@ -1,13 +1,19 @@
 #!/usr/bin/env bun
 // astramem — AstraMemory CLI dispatcher (Wave 2 Track C)
-// Subcommands: ingest-transcript | recall | remember | health | config | doctor | connect
+// Subcommands: ingest-transcript | recall | remember | health | config | doctor | connect | export-md
 // Global: --provider local|saas|auto  (parsed, stored, passed to subcommands)
 //         --help | -h                  (prints usage)
-//         --version                    (prints 0.5.2)
+//         --version                    (prints package.json's version — single source of truth)
 
-const VERSION = '0.5.2';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
-const SUBCOMMANDS = ['ingest-transcript', 'recall', 'remember', 'health', 'config', 'doctor', 'connect'] as const;
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string };
+const VERSION = pkg.version;
+
+const SUBCOMMANDS = ['ingest-transcript', 'recall', 'remember', 'health', 'config', 'doctor', 'connect', 'export-md', 'agent-profile'] as const;
 type Subcommand = typeof SUBCOMMANDS[number];
 type Provider = 'local' | 'saas' | 'auto';
 
@@ -24,6 +30,8 @@ Subcommands:
   config              Get or set configuration (config get [key] | config set <key> <val>)
   doctor              Diagnose selector resolution, logs, env vars, and config
   connect             Connect to the local AstraMemory daemon
+  export-md           Write a repo-visible MEMORY.md digest of deliberate memories
+  agent-profile       Fetch the local daemon's per-agent "what has this agent learned" profile
 
 Global flags:
   --provider local|saas|auto  Override provider selection
@@ -126,6 +134,17 @@ async function main(): Promise<void> {
     case 'connect': {
       const { runConnect } = await import('../src/cli/connect.ts');
       exitCode = await runConnect();
+      break;
+    }
+    case 'export-md': {
+      const { runExportMd } = await import('../src/cli/export-md.ts');
+      exitCode = await runExportMd(subArgs, { provider: providerFlag });
+      break;
+    }
+    case 'agent-profile': {
+      // Local-daemon-only — does not consult --provider (see src/cli/agent-profile.ts header).
+      const { runAgentProfile } = await import('../src/cli/agent-profile.ts');
+      exitCode = await runAgentProfile(subArgs);
       break;
     }
   }

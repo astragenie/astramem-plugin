@@ -34,6 +34,7 @@
  */
 import { z } from 'zod';
 import { DeterministicError } from './errors.ts';
+import { unrefTimer } from './abort.ts';
 
 // ---------------------------------------------------------------------------
 // Domains this plugin build speaks, and the generation of each it expects.
@@ -109,6 +110,9 @@ export class WireIncompatibilityError extends DeterministicError {
 async function fetchVersion(baseUrl: string, timeoutMs: number): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  // unref() so an abandoned probe cannot keep the event loop alive on its own
+  // after a caller's own shorter deadline fires (issue #29).
+  unrefTimer(timer);
   try {
     return await fetch(`${baseUrl}/version`, {
       method: 'GET',

@@ -33,6 +33,15 @@
             "description": "memory: write a session summary memory at session end"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-end-export-md.sh\"",
+            "description": "memory: opt-in refresh of the repo-visible MEMORY.md digest (issue #34, default OFF — set MEMORY_EXPORT_MD_ENABLE=1)"
+          }
+        ]
       }
     ],
     "SubagentStop": [
@@ -42,6 +51,18 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/subagent-stop-capture.sh\"",
             "description": "memory: capture the tail of a Task-agent transcript for extraction"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "remember|mcp__astramem__remember",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/remember-marker.sh\"",
+            "description": "memory: inline save marker after a remember call (issue #40, default ON — set MEMORY_SAVE_MARKER=0 to disable)"
           }
         ]
       }

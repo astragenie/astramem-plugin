@@ -77,6 +77,119 @@ Claude Code. All three hook scripts will print to stderr:
 This surfaces path resolution failures without modifying normal fire-and-forget
 behaviour.
 
+## Default project-scope resolution (issue #33)
+
+`--project`/`--agent` flags on `remember`/`recall` already existed and are wired
+straight through to the daemon (`metadata.project` on write, `provenance.project`
+on read — no wire schema change here). The gap this closed: nothing resolved a
+*default* project when the flag was omitted, so the CLI (no flag → no scope) and
+the hooks (`basename $CWD` in bash) derived scope independently and could drift.
+
+**`resolveProject()`** (`src/lib/project.ts`) is now the single source of truth,
+used by every project-scope call site — `remember`, `recall`,
+`ingest-transcript`, and (via the CLI, not bash) all four hook shims. Precedence,
+highest wins:
+
+1. `flag` — explicit `--project` value the caller parsed
+2. `env` — `ASTRAMEM_PROJECT`
+3. `config` — `project` field in the unified config (`astramem config set project <name>`)
+4. `basename` — `basename(cwd)`, falling back to `'default'` if empty
+
+`cwd` defaults to `process.cwd()`; callers that receive an explicit `cwd` from a
+hook payload (`--cwd` on `remember`/`recall`/`ingest-transcript`) pass it through
+so the resolution matches the session's working directory rather than the hook
+subprocess's own cwd.
+
+Client-local only — deliberately does **not** read `.claude/loop.json` (that's a
+different "project" concept scoped to the loop harness; reading it here risked
+drift between the two, deferred to a future slice) and does not touch any wire
+schema.
+
+**Observability**: with `ASTRAMEM_HOOK_DEBUG=1`, `resolveProject()` prints which
+precedence tier won to stderr: `[astramem-hook-debug] resolveProject: tier=<flag|env|config|basename> value=<...>`.
+
+## MEMORY.md digest vs SessionStart recall (issue #34)
+
+Two different read-side surfaces exist and are deliberately not merged:
+
+- **SessionStart recall hook** (`hooks/scripts/session-start-recall.sh`, issues
+  #31/#32) — *live, machine-local session injection*. Fires every session
+  start, recalls all types unfiltered, and never touches disk. On by default.
+- **`astramem export-md`** (`src/cli/export-md.ts`) — *committed, human/CI-readable
+  snapshot*. Recalls only deliberate memory types (`decision`,`lesson` by
+  default — free-form/auto-distilled types are excluded on purpose, since a
+  git sink is a much higher-stakes destination than a transient prompt) and
+  writes them to `.claude/astramem/MEMORY.md` (default path).
+
+Because the wire `RecallRequest` has no per-type filter, `export-md` over-fetches
+with one semantic query and buckets the results by `hit.type` client-side,
+keeping the top `--k` per type.
+
+**Re-scrub at export time**: ingest-time scrubbing only ever runs once, when an
+atom is first captured. `export-md` re-runs `scrubWithLabels()` over every
+atom's text immediately before writing — a git-committed file persists (history,
+forks, CI logs) in a way the local daemon's own store does not, so it gets a
+second, independent scrub pass rather than trusting the one already applied.
+
+**write-if-different**: if the rendered markdown is byte-identical to what's
+already on disk, the file is left untouched (no wall-clock timestamp is
+stamped into the file, specifically so this comparison is stable run-to-run).
+
+**Opt-in freshness hook**: `hooks/scripts/session-end-export-md.sh` runs
+`export-md` on `SessionEnd`, gated on `MEMORY_EXPORT_MD_ENABLE=1` (default
+**off** — a hook must never write into a user's repo without explicit opt-in).
+When disabled it's a fast no-op.
+
+```sh
+astramem export-md [--project <name>] [--out <path>] [--k <N>] [--types <csv>] [--cwd <path>]
+# --project   default via resolveProject({ cwd })
+# --out       default .claude/astramem/MEMORY.md
+# --k         per-type cap, default 10
+# --types     default "decision,lesson"
+```
+
+## Inline save marker (issue #40)
+
+Every deterministic remember call echoes a compact inline marker so the save
+is visible instead of silent:
+
+```
+🧠 astramem · saved 1 (💡 1 fact)
+🧠 astramem · saved 3 (💡 2 fact · 📝 1 lesson)
+```
+
+**Source of truth**: `src/lib/save-marker.ts` — `SAVE_MARKER_EMOJI` (the 10
+ratified canonical types, unknown types fall back to 🧠) and
+`formatSaveMarker(byType)`, which zero-suppresses (returns `null` when
+nothing was saved) and orders segments in canonical enum order with unknown
+types last.
+
+**Deterministic paths only** (scope of this slice):
+- `astramem remember` (`src/cli/remember.ts`) prints structured JSON on
+  success — `{"ok":true,"saved":1,"by_type":{"<type>":1}}` — instead of the
+  old bare `ok`. A single remember always saves exactly one atom of the
+  parsed type.
+- `hooks/scripts/remember-marker.sh` is a `PostToolUse` shim matched on the
+  daemon's `remember` / `mcp__astramem__remember` MCP tool. It reads the
+  saved count/type off the tool response (or falls back to the
+  one-atom-per-call invariant plus the requested type from `tool_input`),
+  formats the marker via `save-marker.ts`, and emits it as a hook
+  `systemMessage`.
+
+**Kill switch**: `MEMORY_SAVE_MARKER=0` disables the marker (default **on**
+— inverted from `MEMORY_EXPORT_MD_ENABLE`'s default-off, since this marker
+never writes to the repo, it only echoes a transient hook message).
+
+**Out of scope — transcript-capture markers deferred**: PreCompact and
+SubagentStop go through `provider.ingestTranscript()`
+(`src/contracts/provider.ts`), which returns `Promise<void>` — the daemon
+distills atoms from the transcript asynchronously, so there is no
+synchronous per-type saved count available at hook-fire time to format a
+marker from. Unblocking this needs a daemon-side change (e.g. the ingest
+endpoint returning a count-in-response once distillation completes
+synchronously, or a follow-up poll), tracked as future work, not part of
+this slice.
+
 ## Path handling (issue #12)
 
 Claude Code may hand a subagent transcript path with:
@@ -100,3 +213,29 @@ bun test tests/cli/ingest-transcript.test.ts tests/lib/pending.test.ts
 bun test                    # full suite (some vi.* API tests known-fail on bun 1.3)
 bunx tsc --noEmit           # type check
 ```
+
+<!-- crew:start -->
+<!-- Crew framework memory. Run /crew:install after plugin updates that change framework memory. -->
+@.claude/crew/constitution.md
+<!-- crew:end -->
+
+<!-- runner:start -->
+<!-- Installed by /runner:install. Edit .claude/loop.json to change stack-specific commands; re-run /runner:install to regenerate this block. The full HARD RULES live at .claude/loop/rules.md so this block stays small in per-session context. -->
+
+## Autonomous Loop — HARD RULES (summary)
+
+This repo runs the Wiggin Loop autonomously. Full rules: `.claude/loop/rules.md`.
+
+- **Run until PASS.** Do not stop for confirmation. Stop only when every acceptance criterion is PASS with evidence, or the work is externally blocked.
+- **Auto mode (default — `loop.marathonMode: true`).** Loop walks the entire backlog. Stops only on backlog exhaustion, crew `escalated_to_human`, warn-severity pattern alerts, or high-severity cost alerts. Iteration cap and soft `blocked` badge are advisory in this mode — set `loop.marathonMode: false` in `.claude/loop.json` to restore the legacy five-condition gating.
+- **Slice start ceremony.** Every slice MUST open via `/runner:slice start --id SLICE-NN` (rotates `currentRun` so cost auto-emit attributes the work correctly + refreshes `.claude/state/crew/slice-progress.md`).
+- **Dispatch discipline.** The loop is an orchestrator, not an implementer. Hand the `slice start` return's `dispatchInstruction` to a `crew:builder` subagent (implementation only); after it returns, dispatch `crew:reviewer`, then `crew:validator` if behavior changed; pivot to `/crew:fix` on any needs_fix or fail. Inline implementation is reserved for trivial single-line fixups.
+- **Slice close ceremony.** Every slice MUST close via `/runner:slice complete --id SLICE-NN` (writes handoff + final-synthesis + cost-report + cost-advise) followed by `/runner:slice grade*`. Manual file moves + a `docs(slice): mark ... complete` commit are NOT a substitute.
+- **Build entry points.** `/crew:build` is the interactive single-slice path (lighter — no run-brief required). Autonomous loop is the unattended multi-slice path (full ceremony). Never run both against the same branch — they race on workflow-state.
+- **Auto-continue.** After the ceremony, scan `.claude/artifacts/loop/specs/` → `.claude/artifacts/loop/backlog/pending/` → `.claude/artifacts/loop/backlog/triaged/` and promote the next item without asking.
+- **Phase gate.** When the last slice in a phase completes, run `/runner:phase-gate` before starting the next phase.
+- **Worktree parallelism.** Run parallel features in sibling git worktrees — each has its own `.claude/state/`. Cost attribution is auto-scoped per worktree. Use `crew fleet --repo "$PWD"` for a one-glance view. Never check out the same branch twice; never push from inside the loop.
+
+First action when starting the runner: read `.claude/loop/rules.md` → `.claude/artifacts/loop/ai-loop/00-entry/MASTER_PROMPT.md` → `.claude/artifacts/loop/ai-loop/backlog/approved-slices.md`.
+
+<!-- runner:end -->
