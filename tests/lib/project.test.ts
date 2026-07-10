@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { resolveProject } from '../../src/lib/project.ts';
@@ -122,5 +123,69 @@ describe('resolveProject', () => {
     resolveProject({ cwd: '/home/user/projects/my-app' });
     expect(stderrSpy).not.toHaveBeenCalled();
     stderrSpy.mockRestore();
+  });
+
+  // -------------------------------------------------------------------------
+  // Worktree-aware basename tier (astragenie/memory#705)
+  //
+  // A synthetic path that isn't a git repo falls straight through to plain
+  // basename(cwd) — the git probe fails and is swallowed. The tests above
+  // (tier 4) already cover that. Here we exercise real git repos + linked
+  // worktrees to prove the guid leak is closed.
+  // -------------------------------------------------------------------------
+
+  function git(cwd: string, ...args: string[]): void {
+    execFileSync('git', args, { cwd, stdio: 'ignore', timeout: 5000, windowsHide: true });
+  }
+
+  function initRepo(dir: string): void {
+    mkdirSync(dir, { recursive: true });
+    git(dir, 'init', '-q');
+    git(dir, 'config', 'user.email', 'test@example.com');
+    git(dir, 'config', 'user.name', 'test');
+    git(dir, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(dir, 'README.md'), '# test\n');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'init');
+  }
+
+  it('main worktree: basename tier resolves to the repo dir name', () => {
+    const repo = join(tmpDir, 'my-real-project');
+    initRepo(repo);
+    expect(resolveProject({ cwd: repo })).toBe('my-real-project');
+  });
+
+  it('linked worktree: resolves to the MAIN repo name, not the worktree dir', () => {
+    const repo = join(tmpDir, 'astramemory-plugin');
+    initRepo(repo);
+    const wt = join(tmpDir, 'agent-a072e952f5b78d3c1');
+    git(repo, 'worktree', 'add', '-q', '--detach', wt);
+    // Without the fix this returns "agent-a072e952f5b78d3c1" (the leak).
+    expect(resolveProject({ cwd: wt })).toBe('astramemory-plugin');
+  });
+
+  it('explicit flag/env/config still win over the git-resolved basename', () => {
+    const repo = join(tmpDir, 'astramemory-plugin');
+    initRepo(repo);
+    const wt = join(tmpDir, 'agent-deadbeef');
+    git(repo, 'worktree', 'add', '-q', '--detach', wt);
+    process.env['ASTRAMEM_PROJECT'] = 'env-project';
+    expect(resolveProject({ cwd: wt })).toBe('env-project');
+  });
+
+  it('bare repo + linked worktree: resolves to the bare dir name, not its parent', () => {
+    // git-common-dir returns the bare dir itself (NOT `.git`-suffixed); an
+    // unconditional dirname() would leak the parent dir name as scope.
+    const bareParent = join(tmpDir, 'bare-parent');
+    mkdirSync(bareParent, { recursive: true });
+    const bare = join(bareParent, 'my-bare.git');
+    // Seed a non-bare repo with one commit, then clone --bare so the worktree
+    // add has a commit to detach from.
+    const seed = join(tmpDir, 'seed');
+    initRepo(seed);
+    git(bareParent, 'clone', '-q', '--bare', seed, bare);
+    const wt = join(tmpDir, 'agent-cafebabe');
+    git(bare, 'worktree', 'add', '-q', '--detach', wt);
+    expect(resolveProject({ cwd: wt })).toBe('my-bare.git');
   });
 });

@@ -93,7 +93,13 @@ highest wins:
 1. `flag` — explicit `--project` value the caller parsed
 2. `env` — `ASTRAMEM_PROJECT`
 3. `config` — `project` field in the unified config (`astramem config set project <name>`)
-4. `basename` — `basename(cwd)`, falling back to `'default'` if empty
+4. `basename` — the repo directory name. Worktree-aware (issue #705): probes
+   `git rev-parse --git-common-dir` so an isolated `agent-<guid>` git worktree
+   resolves back to the **main** repo name instead of leaking the worktree dir
+   as a phantom project scope. Bare repos resolve to the bare dir's own name.
+   Falls back to plain `basename(cwd)` (then `'default'` if empty) whenever the
+   git probe fails — not a repo, git missing, or 2s timeout — so a hook/CLI call
+   never breaks.
 
 `cwd` defaults to `process.cwd()`; callers that receive an explicit `cwd` from a
 hook payload (`--cwd` on `remember`/`recall`/`ingest-transcript`) pass it through
