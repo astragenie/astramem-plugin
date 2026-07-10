@@ -27,7 +27,9 @@ jobs:
             echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}"
           } >> .npmrc
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.ASTRAMEM_LOCAL_TOKEN }}
+          # Use the built-in GITHUB_TOKEN — the astramem-contracts package grants
+          # this repo read via "Manage Actions access", so no PAT scope needed.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Type-check
