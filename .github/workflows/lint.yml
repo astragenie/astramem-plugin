@@ -23,8 +23,8 @@ jobs:
         shell: bash
         run: |
           {
-            echo "@astragenie:registry=https://npm.pkg.github.com"
-            echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}"
+            echo "@astragenie:registry=https://registry.npmjs.org"
+            echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}"
           } >> .npmrc
         env:
           # Use the built-in GITHUB_TOKEN — the astramem-contracts package grants
