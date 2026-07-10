@@ -19,6 +19,7 @@ vi.mock('../../src/lib/datadir.ts', () => ({
 // Mock provider implementations
 // ---------------------------------------------------------------------------
 const makeMockProvider = (): MemoryProvider => ({
+  capabilities: { tenancy: 'single', asOf: false, explainSignals: [] },
   ingest: vi.fn().mockResolvedValue(undefined),
   ingestTranscript: vi.fn().mockResolvedValue(undefined),
   recall: vi.fn().mockResolvedValue({ hits: [] }),
@@ -314,6 +315,59 @@ describe('resolveProvider — data-local privacy-safe policy', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Backend identity on the provider handle (issue #35).
+// ---------------------------------------------------------------------------
+describe('resolveProvider — backend identity on provider handle', () => {
+  it('stamps provider.backend === "local" on the local resolution path', async () => {
+    writeConfig('local');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const result = await resolveProvider({});
+    expect(result.providerName).toBe('local');
+    expect(result.provider.backend).toBe('local');
+  });
+
+  it('stamps provider.backend === "saas" on the saas resolution path', async () => {
+    writeConfig('saas');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const result = await resolveProvider({});
+    expect(result.providerName).toBe('saas');
+    expect(result.provider.backend).toBe('saas');
+  });
+
+  it('a caller holding only the provider handle can still read its backend', async () => {
+    writeConfig('local');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const { provider } = await resolveProvider({});
+    expect(provider.backend).toBe('local');
+  });
+
+  it('provider.backend is readonly — reassignment does not change it', async () => {
+    writeConfig('local');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const result = await resolveProvider({});
+    const mutate = () => {
+      Object.assign(result.provider, { backend: 'saas' });
+    };
+    // Object.defineProperty(..., { writable: false }) throws under strict
+    // mode (ESM is always strict) when a property is reassigned.
+    expect(mutate).toThrow();
+    expect(result.provider.backend).toBe('local');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Startup wire-version compatibility probe (FEAT 4a backlog M1) — wiring
 // tests. The probe module's own classification logic (compatible/legacy/
 // unreachable/incompatible) is covered by tests/lib/wire-probe.test.ts; these
@@ -402,5 +456,93 @@ describe('resolveProvider — startup wire-compat probe wiring', () => {
       stderrSpy.mockRestore();
       _resetWireCompatFn();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #29 — internal deadline timer in defaultHealthProbe not unref()'d +
+// no external AbortSignal threaded through resolveProvider(opts).
+// ---------------------------------------------------------------------------
+describe('resolveProvider — opts.signal forwarding to the auto-probe (issue #29)', () => {
+  it('forwards opts.signal through to the injected health-probe fn on the auto path', async () => {
+    writeConfig('auto');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+
+    let capturedSignal: AbortSignal | undefined;
+    _setHealthProbeFn(async (_url: string, signal?: AbortSignal) => {
+      capturedSignal = signal;
+      return { ok: true, latency_ms: 1 };
+    });
+
+    const ctrl = new AbortController();
+    await resolveProvider({ signal: ctrl.signal });
+    expect(capturedSignal).toBe(ctrl.signal);
+  });
+
+  it('resolves fine when no signal is passed (backward-compatible, optional param)', async () => {
+    writeConfig('auto');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const result = await resolveProvider({});
+    expect(result.providerName).toBe('local');
+  });
+});
+
+describe('_defaultHealthProbe (real HTTP probe) — timer unref + external AbortSignal (issue #29)', () => {
+  let origFetch: typeof globalThis.fetch;
+  let origSetTimeout: typeof globalThis.setTimeout;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    origSetTimeout = globalThis.setTimeout;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+    globalThis.setTimeout = origSetTimeout;
+  });
+
+  it('AC-1: unref()s its internal 5s deadline timer', async () => {
+    const { _defaultHealthProbe } = await getSelector();
+    const unrefSpy = vi.fn();
+    globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      const timer = origSetTimeout(fn, ms, ...args);
+      const originalUnref = (timer as unknown as { unref?: () => unknown }).unref?.bind(timer);
+      (timer as unknown as { unref: () => unknown }).unref = () => {
+        unrefSpy();
+        return originalUnref?.();
+      };
+      return timer;
+    }) as typeof setTimeout;
+
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    ) as typeof fetch;
+
+    await _defaultHealthProbe('http://127.0.0.1:19999');
+    expect(unrefSpy).toHaveBeenCalled();
+  });
+
+  it('an external AbortSignal shorter than the 5s internal timeout aborts the probe early and resolves ok:false', async () => {
+    const { _defaultHealthProbe } = await getSelector();
+    let capturedSignal: AbortSignal | undefined;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        capturedSignal?.addEventListener('abort', () => {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+        });
+      });
+    }) as typeof fetch;
+
+    const ctrl = new AbortController();
+    const pending = _defaultHealthProbe('http://127.0.0.1:19999', ctrl.signal);
+    ctrl.abort();
+
+    const result = await pending;
+    expect(result.ok).toBe(false);
   });
 });

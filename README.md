@@ -20,10 +20,16 @@ curl -fsSL https://bun.sh/install | bash
 bun add -g @astragenie/astramem-plugin
 
 # 3. Pair this workstation to a provider
-astramem connect          # local daemon (astramem-local must be running)
-# OR — if you have a dashboard claim code:
-astramem connect ABCD-1234 --env prod
+astramem connect                        # local daemon (astramem-local must be running on :7777)
+# OR — if you have a dashboard claim code, use the separate memory-connect bin
+# (aliased as astramem-connect; NOT a subcommand of `astramem`):
+astramem-connect ABCD-1234 --env prod
 ```
+
+`astramem connect` and `astramem-connect <code>` are two different bins: the former (`src/cli/connect.ts`)
+takes no arguments and probes the local daemon's `GET /health`; the latter (`bin/memory-connect.ts`,
+aliased `astramem-connect`) redeems a dashboard claim code against the SaaS API and writes a token file.
+See [Back-compat bins](#back-compat-bins) for the full alias list.
 
 ---
 
@@ -68,13 +74,14 @@ If the provider is unreachable they suggest `astramem health` for diagnosis.
 
 | Sub-command | Description |
 | --- | --- |
-| `ingest` | Fire-and-forget: ingest a JSON payload. Exit 0 always (errors go to log). |
+| `ingest-transcript` | Fire-and-forget: ingest a JSONL transcript file. Exit 0 always (errors go to log). Hook shim target. |
 | `recall` | Recall memories matching a query. Prints `{ hits: [...] }` JSON to stdout. |
 | `remember` | Store a new typed memory item. |
 | `health` | Probe configured provider(s). JSON output `{ ok, provider, url, latencyMs }`. |
 | `config` | Read/write config file via dot-path keys (`config get`, `config set`, `config unset`). |
 | `doctor` | Print env vars, last 5 log lines, selector resolution, config validation, and per-alias env-deprecation hit counts. |
-| `connect` | Pair this workstation to a provider (local daemon or SaaS dashboard code). |
+| `connect` | Probe the local daemon's health (no args). For SaaS dashboard claim codes use the separate `astramem-connect` bin instead. |
+| `export-md` | Write a repo-visible `MEMORY.md` digest of deliberate memories (decision/lesson by default). |
 
 Full flag reference: `astramem --help` or `astramem <subcommand> --help`.
 
@@ -95,6 +102,27 @@ local and SaaS backends. See `src/lib/selector.ts` for the implementation.
 
 The selector source is reported in `astramem doctor` output and in structured log lines emitted
 at each dispatch.
+
+### Using the selector as a library
+
+`resolveProvider()` is importable outside the CLI via the `./selector` export
+(see `exports` in `package.json`):
+
+```ts
+import { resolveProvider } from '@astragenie/astramem-plugin/selector';
+
+const result = await resolveProvider({});
+result.providerName; // 'local' | 'saas' — THE supported backend-identity field
+result.provider.backend; // 'local' | 'saas' — same value, readable off the
+                          // provider handle alone when that's all a caller has
+```
+
+`SelectorResult.providerName` is the canonical field for "which backend did the
+selector choose" — prefer it whenever you have a `SelectorResult` in hand. For
+code paths that only receive the `provider` object (e.g. after destructuring
+`const { provider } = await resolveProvider()`), the resolved provider
+instance is also stamped with a readonly `backend` property carrying the same
+value, so backend identity never has to be threaded through separately.
 
 ---
 
@@ -137,9 +165,9 @@ The scrub is applied in `src/lib/scrub.ts` and called at every provider error pa
 
 ## Fail-silent ingest log
 
-`astramem ingest` (and the PreCompact / SessionEnd / SubagentStop hooks) write structured
-one-line JSON entries to `ingest.log` on every attempt — success or failure. Errors from a
-down provider are recorded here rather than surfaced to the calling process. The log is
+`astramem ingest-transcript` (called by the PreCompact / SessionEnd / SubagentStop hooks) writes
+structured one-line JSON entries to `ingest.log` on every attempt — success or failure. Errors
+from a down provider are recorded here rather than surfaced to the calling process. The log is
 append-only and human-readable; inspect it with `astramem doctor` or `tail` it directly.
 
 ---
@@ -155,23 +183,50 @@ scrubbed prior to write.
 
 ## Environment variables
 
-Canonical env names (v0.5.0+) with legacy aliases:
+Source of truth: `src/lib/env-specs.ts` (the `ENV` registry consumed by `resolveEnv()` in
+`src/lib/env.ts`). Canonical wins over alias; alias reads emit a one-shot deprecation warning
+(visible in `astramem doctor --json` as `deprecation_hits`) unless `MEMORY_DEPRECATION_OPT_OUT=1`.
+
+**Provider selector + daemon connection:**
 
 | Canonical | Legacy aliases | Default | Purpose |
 | --- | --- | --- | --- |
 | `ASTRAMEM_PROVIDER` | `MEMORY_PROVIDER` | (none) | Override provider selection (`local`, `saas`, `auto`). |
-| `MEMORY_BEARER` | (none) | (resolved via `astramem connect`) | Bearer token for MCP transport (`.mcp.json`). |
-| `MEMORY_API_URL` | `ASTRAMEMORY_API_URL` | `http://localhost:5201` | API base URL for hook scripts. |
-| `MEMORY_MCP_URL` | (none) | `http://localhost:5202` | MCP server URL read by `.mcp.json`. |
-| `MEMORY_INGEST_RETRIES` | (none) | `2` | POST attempt budget per hook fire. |
-| `MEMORY_INGEST_RETRY_SLEEP` | (none) | `1` | Seconds between hook retry attempts. |
-| `MEMORY_PRECOMPACT_MAX_TURNS` | (none) | `20` | Turns captured by PreCompact hook. |
-| `MEMORY_SESSION_MAX_TURNS` | (none) | `40` | Turns captured by SessionEnd hook. |
-| `MEMORY_SUBAGENT_MAX_TURNS` | (none) | `12` | Turns captured by SubagentStop hook. |
-| `ASTRAMEMORY_ENV` | (none) | `prod` | Active profile name for `~/.astramemory/` legacy lookup. |
-| `ASTRAMEMORY_HOOK_DEBUG` | (none) | `0` | Set `1` to emit one debug line per hook fire to stderr. |
+| `MEMORY_BEARER` | `ASTRAMEMORY_API_KEY` | (resolved via `secrets.env`, written by `astramem connect`) | Bearer token for the local daemon and for the MCP transport (`.mcp.json`). |
+| `MEMORY_API_URL_LOCAL` | `ASTRAMEMORY_API_URL` (when the value looks like `localhost`/`127.0.0.1`/`0.0.0.0`) | `http://127.0.0.1:7777` | Local daemon base URL. |
+| `MEMORY_API_URL_SAAS` | `MEMORY_API_URL`, `ASTRAMEMORY_API_URL` (when the value does NOT look local) | (none — must be configured for the `saas` provider) | SaaS gateway base URL. |
 
-For the complete list of canonical names and resolution order, see the environment specification file.
+**Transcript-capture hooks** (turn/char caps passed to `ingest-transcript`):
+
+| Canonical | Legacy alias | Default | Hook |
+| --- | --- | --- | --- |
+| `MEMORY_PRECOMPACT_MAX_TURNS` / `_MAX_CHARS` | (none) | `20` / `12000` | PreCompact |
+| `MEMORY_SESSIONEND_MAX_TURNS` / `_MAX_CHARS` | `MEMORY_SESSION_MAX_TURNS` / `MEMORY_SESSION_MAX_CHARS` | `20` / `12000` | SessionEnd |
+| `MEMORY_SUBAGENT_MAX_TURNS` / `_MAX_CHARS` | (none) | `20` / `12000` | SubagentStop |
+
+**Read-side / export hooks** (read directly by the shell shims — no alias resolution or
+deprecation tracking; see `hooks/scripts/*.sh`):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MEMORY_SESSIONSTART_RECALL_DISABLE` | (unset = enabled) | Set `1` to skip the SessionStart recall hook entirely. |
+| `MEMORY_SESSIONSTART_RECALL_K` | `8` | Top-K hits injected as SessionStart context. |
+| `MEMORY_SESSIONSTART_RECALL_QUERY` | `"project context decisions lessons constraints state"` | Recall query override. |
+| `MEMORY_SESSIONSTART_MAX_ATOM_CHARS` | `300` | Per-atom truncation in the injected context. |
+| `MEMORY_EXPORT_MD_ENABLE` | (unset = off) | Set `1` to turn on the opt-in SessionEnd `export-md` hook. |
+| `MEMORY_EXPORT_MD_OUT` | `.claude/astramem/MEMORY.md` | Output path override. |
+| `MEMORY_EXPORT_MD_K` | `10` | Top-K per type. |
+| `MEMORY_EXPORT_MD_TYPES` | `decision,lesson` | Comma-separated memory types to include. |
+
+**Misc:**
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ASTRAMEM_HOOK_DEBUG` | `0` | Set `1` to emit one debug line per hook fire to stderr. |
+| `MEMORY_DEPRECATION_OPT_OUT` | `0` | Set `1` to silence legacy-alias deprecation warnings. |
+| `ASTRAMEMORY_ENV` | `prod` | Env profile used by `astramem-connect`/`memory-connect` and legacy `~/.astramemory/` lookup. |
+
+For the exact resolution algorithm, see `resolveEnv()` in `src/lib/env.ts`.
 
 ---
 
@@ -180,8 +235,8 @@ For the complete list of canonical names and resolution order, see the environme
 | Hook | Trigger | Max turns | Override |
 | --- | --- | --- | --- |
 | PreCompact | Before context compaction | 20 | `MEMORY_PRECOMPACT_MAX_TURNS` |
-| SessionEnd | Claude Code session exit | 40 | `MEMORY_SESSION_MAX_TURNS` |
-| SubagentStop | Sub-agent task end | 12 | `MEMORY_SUBAGENT_MAX_TURNS` |
+| SessionEnd | Claude Code session exit | 20 | `MEMORY_SESSIONEND_MAX_TURNS` (legacy alias `MEMORY_SESSION_MAX_TURNS`) |
+| SubagentStop | Sub-agent task end | 20 | `MEMORY_SUBAGENT_MAX_TURNS` |
 
 All hooks exit 0 and never block the triggering event. Failures (provider down, no Bearer,
 `jq` missing) are written to `ingest.log` and silently swallowed.
@@ -195,9 +250,9 @@ Each provider implements the same MemoryProvider interface but targets different
 | Method | Local provider | SaaS provider |
 |---|---|---|
 | `ingest()` (generic item) | not used by hooks | `POST /ingest` |
-| `ingestTranscript()` (hooks) | `POST /ingest/transcript` | `POST /ingest/transcript` (pending — see FEAT 4a) |
-| `recall()` | `POST /recall` | `POST /memories/search` (pending — see FEAT 4a) |
-| `remember()` | `POST /remember` | `POST /memories` (pending — see FEAT 4a) |
+| `ingestTranscript()` (hooks) | `POST /ingest/transcript` | `POST /ingest/transcript` |
+| `recall()` | `POST /recall` | `POST /memories/search` |
+| `remember()` | `POST /remember` | `POST /memories` |
 | `health()` | `GET /health` | `GET /health` |
 | `version()` | `GET /version` | `GET /version` |
 
@@ -210,20 +265,23 @@ Both providers accept the same wire contract (SaaS-canonical envelope) for `inge
 
 ## MCP server
 
-`.mcp.json` registers an HTTP MCP server at `${MEMORY_MCP_URL}/mcp`. The slash commands do
-**not** go through MCP — they invoke `bin/astramem` directly. The MCP server remains available
-for other agents or tools that prefer the MCP protocol.
+`.mcp.json` registers an HTTP MCP server at `${MEMORY_API_URL}/mcp`, authenticated with
+`Authorization: Bearer ${MEMORY_BEARER}`. The slash commands do **not** go through MCP — they
+invoke `bin/astramem` directly. The MCP server remains available for other agents or tools that
+prefer the MCP protocol.
 
-Export `MEMORY_BEARER` and `MEMORY_MCP_URL` before launching Claude Code if you want the MCP
-transport live alongside the CLI path.
+Export `MEMORY_BEARER` and `MEMORY_API_URL` before launching Claude Code if you want the MCP
+transport live alongside the CLI path (`MEMORY_API_URL` here is read literally by `.mcp.json`'s
+env substitution — it is not resolved through `resolveEnv()`/`env-specs.ts` the way the CLI's
+`MEMORY_API_URL_LOCAL`/`MEMORY_API_URL_SAAS` are).
 
 ---
 
 ## Daily ops cheatsheet
 
 ```bash
-# Ingest a JSON payload
-astramem ingest --json '{"id":"s1","type":"transcript","text":"..."}'
+# Ingest a transcript file (this is what the hook shims call — see hooks/scripts/*.sh)
+astramem ingest-transcript --event session_end --session-id s1 --transcript-path ./transcript.jsonl
 
 # Recall recent decisions
 astramem recall --query "provider selector decision" --k 10
@@ -248,17 +306,17 @@ astramem config set provider local
 # Pair workstation (local daemon)
 astramem connect
 
-# Pair workstation (dashboard claim code)
-astramem connect ABCD-1234 --env prod
+# Pair workstation (dashboard claim code) — separate bin, not an `astramem` subcommand
+astramem-connect ABCD-1234 --env prod
 ```
 
 Example `astramem doctor --json` output (partial):
 ```json
 {
-  "env_vars": { "ASTRAMEM_PROVIDER": "auto", "MEMORY_BEARER": "..." },
+  "env_vars": { "MEMORY_BEARER": "[present, redacted]", "MEMORY_API_URL": null, "ASTRAMEM_PROVIDER": "auto" },
   "deprecation_hits": [
     { "canonical": "ASTRAMEM_PROVIDER", "alias": "MEMORY_PROVIDER", "hits": 3 },
-    { "canonical": "MEMORY_API_URL", "alias": "ASTRAMEMORY_API_URL", "hits": 1 }
+    { "canonical": "MEMORY_API_URL_LOCAL", "alias": "ASTRAMEMORY_API_URL", "hits": 1 }
   ]
 }
 ```
@@ -270,7 +328,7 @@ Example `astramem doctor --json` output (partial):
 - [astramem-local](https://github.com/astragenie/astramemory-local) — local daemon that the
   `local` provider talks to. Run it on `localhost:7777` for offline / private memory.
 - [runner-plugin](https://github.com/astragenie/runner-plugin) — Engineering OS runner plugin;
-  shares the `astramem ingest` path for session digests.
+  shares the `astramem ingest-transcript` path for session digests.
 - [crew / GEPA loop](https://github.com/astragenie/crew) — dev-team crew plugin whose
   PreCompact hooks feed into AstraMemory via this plugin.
 

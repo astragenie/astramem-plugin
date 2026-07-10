@@ -25,6 +25,12 @@ import { runProviderContract, SAMPLE_INGEST, SAMPLE_RECALL } from './_contract.t
 import { DeterministicError, TransientError } from '../../src/lib/errors.ts';
 import { WIRE_VERSION } from '../../src/contracts/wire.ts';
 
+// Captured once at module load, before any test mutates globalThis.setTimeout
+// (e.g. via vi.useFakeTimers()/vi.useRealTimers() or manual spy wrapping) —
+// used by tests below that need a real timer tick independent of any other
+// test's timer mocking state.
+const REAL_SET_TIMEOUT = globalThis.setTimeout;
+
 // ---------------------------------------------------------------------------
 // Contract suite — all shared contract checks run for LocalProvider
 // ---------------------------------------------------------------------------
@@ -34,6 +40,17 @@ runProviderContract('LocalProvider', (baseUrl) => new LocalProvider(baseUrl));
 // ---------------------------------------------------------------------------
 // Local-specific tests
 // ---------------------------------------------------------------------------
+
+describe('LocalProvider — capabilities (#26)', () => {
+  it('reports single-tenant, no as_of, no explain signals', () => {
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    expect(provider.capabilities).toEqual({
+      tenancy: 'single',
+      asOf: false,
+      explainSignals: [],
+    });
+  });
+});
 
 describe('LocalProvider — bearer from MEMORY_BEARER env', () => {
   let origFetch: typeof globalThis.fetch;
@@ -364,5 +381,256 @@ describe('LocalProvider — bearer not logged on error paths', () => {
     // Console output must NOT contain the bearer.
     const allOutput = capturedMessages.join('\n');
     expect(allOutput).not.toContain(sensitiveBearer);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// issue #29 — internal deadline timers not unref()'d + no external AbortSignal.
+// A reachable-but-slow backend meant a caller's own shorter wallclock cap
+// (e.g. Promise.race) fired, but the abandoned fetch + its ref'd internal
+// timer kept the event loop alive up to the remaining internal window —
+// hanging one-shot CLI processes that set process.exitCode instead of
+// calling process.exit().
+// ---------------------------------------------------------------------------
+describe('LocalProvider — internal timer unref + external AbortSignal (issue #29)', () => {
+  let origFetch: typeof globalThis.fetch;
+  let origSetTimeout: typeof globalThis.setTimeout;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    origSetTimeout = globalThis.setTimeout;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+    globalThis.setTimeout = origSetTimeout;
+    vi.useRealTimers();
+  });
+
+  it('AC-1: unref()s the internal deadline timer so it cannot keep the event loop alive on its own', async () => {
+    const unrefSpy = vi.fn();
+    globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+      const timer = origSetTimeout(fn, ms, ...args);
+      const originalUnref = (timer as unknown as { unref?: () => unknown }).unref?.bind(timer);
+      (timer as unknown as { unref: () => unknown }).unref = () => {
+        unrefSpy();
+        return originalUnref?.();
+      };
+      return timer;
+    }) as typeof setTimeout;
+
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    ) as typeof fetch;
+
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.health();
+
+    expect(unrefSpy).toHaveBeenCalled();
+  });
+
+  it('AC-2: an external AbortSignal shorter than the 5s internal timeout aborts the request early, not at 5s', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        // Simulate a reachable-but-slow backend: never resolves on its own —
+        // only settles when the (combined) signal aborts. Mirrors real fetch()
+        // semantics: check the already-aborted case synchronously (covers the
+        // race where ctrl.abort() below fires before this mock even runs),
+        // then fall back to listening for a future abort event.
+        if (capturedSignal?.aborted) {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+          return;
+        }
+        capturedSignal?.addEventListener('abort', () => {
+          const err = new DOMException('This operation was aborted', 'AbortError');
+          reject(err);
+        });
+      });
+    }) as typeof fetch;
+
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    const ctrl = new AbortController();
+    const pending = provider.recall(SAMPLE_RECALL, ctrl.signal);
+    // Caller's own short cap fires — well before the provider's internal 5s deadline.
+    ctrl.abort();
+
+    const err = await pending.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientError);
+    expect((err as TransientError).kind).toBe('transient');
+    expect((err as Error).message).toMatch(/caller/i);
+  });
+
+  it(
+    'AC-3: with no external signal, the internal timeout still throws TransientError on an unreachable/slow daemon (finally still clears the timer)',
+    async () => {
+      // Deliberately uses real timers rather than vi.useFakeTimers() — this
+      // vitest/environment combination has been observed to leave
+      // globalThis.setTimeout broken for later tests after
+      // useFakeTimers()/useRealTimers() cycles here, which is a test-harness
+      // hazard unrelated to the behavior under test. A real ~3s wait is slow
+      // but reliable and keeps global timer state untouched for other tests.
+      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('This operation was aborted', 'AbortError'));
+          });
+        });
+      }) as typeof fetch;
+
+      const provider = new LocalProvider('http://127.0.0.1:19999');
+      // health()'s internal fetchWithTimeout deadline is 3000ms.
+      const err = await provider.health().catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(TransientError);
+      expect((err as TransientError).kind).toBe('transient');
+      expect((err as Error).message).toMatch(/timed out/i);
+    },
+    10_000,
+  );
+
+  it('AC-4: an already-aborted external signal rejects immediately — not after any part of the internal window', async () => {
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted) {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+          return;
+        }
+        // Otherwise never resolves — proves we didn't fall through to a real wait.
+      });
+    }) as typeof fetch;
+
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    const alreadyAborted = AbortSignal.timeout(0);
+    // Give AbortSignal.timeout(0) a tick to actually fire. Uses the real
+    // setTimeout captured at module load — independent of any other test's
+    // timer mocking (fake timers / spy wrapping) in this describe block.
+    await new Promise((resolve) => REAL_SET_TIMEOUT(resolve, 10));
+
+    const start = Date.now();
+    const err = await provider.recall(SAMPLE_RECALL, alreadyAborted).catch((e: unknown) => e);
+    const elapsedMs = Date.now() - start;
+
+    expect(elapsedMs).toBeLessThan(500);
+    expect(err).toBeInstanceOf(TransientError);
+    expect((err as TransientError).kind).toBe('transient');
+    expect((err as Error).message).toMatch(/caller/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review finding #2 (issue #29 APPROVED_WITH_NOTES) — the ingest()/
+// ingestTranscript() retry-once-on-TransientError path fired the retry
+// unconditionally, even when the caller's own signal had already aborted.
+// A caller that gave up should not cause a second network attempt.
+// ---------------------------------------------------------------------------
+describe('LocalProvider — retry skips when caller signal is already aborted (review finding #2)', () => {
+  let origFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  it('ingest(): does not retry when signal is already aborted before the first attempt', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      fetchCallCount++;
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted) {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+          return;
+        }
+        // Otherwise never resolves — not reached once the signal is already
+        // aborted at call time, which is the case in this test.
+      });
+    }) as typeof fetch;
+
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    const ctrl = new AbortController();
+    ctrl.abort();
+
+    await provider.ingest(SAMPLE_INGEST, ctrl.signal);
+
+    // Exactly one fetch attempt — the caller-abort short-circuit must skip
+    // the retry (fire-and-forget: resolves without throwing either way).
+    expect(fetchCallCount).toBe(1);
+  });
+
+  it('ingest(): retries exactly once as before when signal is undefined and a 5xx occurs (no regression)', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+      fetchCallCount++;
+      return new Response('{"error":"server error"}', {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.ingest(SAMPLE_INGEST);
+
+    expect(fetchCallCount).toBe(2);
+  });
+
+  it('ingestTranscript(): does not retry when signal is already aborted before the first attempt', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      fetchCallCount++;
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted) {
+          reject(new DOMException('This operation was aborted', 'AbortError'));
+          return;
+        }
+      });
+    }) as typeof fetch;
+
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    const ctrl = new AbortController();
+    ctrl.abort();
+
+    await provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD, ctrl.signal);
+
+    expect(fetchCallCount).toBe(1);
+  });
+
+  it('ingestTranscript(): retries exactly once as before when signal is undefined and a 5xx occurs (no regression)', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+      fetchCallCount++;
+      return new Response('{"error":"server error"}', {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.ingestTranscript(SAMPLE_TRANSCRIPT_PAYLOAD);
+
+    expect(fetchCallCount).toBe(2);
+  });
+
+  it('ingest(): does not retry when signal aborts between the first attempt failing and the retry decision', async () => {
+    let fetchCallCount = 0;
+    const ctrl = new AbortController();
+    globalThis.fetch = (async (): Promise<Response> => {
+      fetchCallCount++;
+      // Caller gives up right as the first (non-aborted) attempt's response
+      // comes back as a transient failure — before the retry would fire.
+      ctrl.abort();
+      return new Response('{"error":"server error"}', {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const provider = new LocalProvider('http://127.0.0.1:19999');
+    await provider.ingest(SAMPLE_INGEST, ctrl.signal);
+
+    expect(fetchCallCount).toBe(1);
   });
 });

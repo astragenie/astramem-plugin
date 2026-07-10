@@ -2,9 +2,15 @@
 // Returns a MemoryProvider whose methods are vi.fn() stubs with canned defaults.
 // Also exposes ingestTranscript stub for ingest-transcript subcommand tests.
 import { vi } from 'vitest';
-import type { MemoryProvider } from '../../src/contracts/provider.ts';
+import type { MemoryProvider, ProviderCapabilities } from '../../src/contracts/provider.ts';
 import type { RecallResponse, HealthResponse } from '../../src/contracts/wire.ts';
 import type { TranscriptProvider } from '../../src/cli/ingest-transcript.ts';
+
+const MOCK_CAPABILITIES: ProviderCapabilities = {
+  tenancy: 'single',
+  asOf: false,
+  explainSignals: [],
+};
 
 export interface MockProviderStubs {
   ingest: ReturnType<typeof vi.fn>;
@@ -90,6 +96,7 @@ export function createMockProvider(overrides: Partial<{
   }
 
   const provider: MockProvider = {
+    capabilities: MOCK_CAPABILITIES,
     ingest: stubs.ingest as MemoryProvider['ingest'],
     ingestTranscript: stubs.ingestTranscript as TranscriptProvider['ingestTranscript'],
     recall: stubs.recall as MemoryProvider['recall'],

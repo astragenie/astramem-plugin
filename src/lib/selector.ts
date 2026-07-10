@@ -20,7 +20,7 @@
  * WireIncompatibilityError; an unreachable or pre-contract ("legacy")
  * backend only warns to stderr and resolution proceeds.
  */
-import type { SelectorResult } from '../contracts/selector.ts';
+import type { SelectorResult, ProviderHandle } from '../contracts/selector.ts';
 import type { Provider } from '../contracts/selector.ts';
 import type { MemoryProvider } from '../contracts/provider.ts';
 import { loadConfig } from './config.ts';
@@ -33,6 +33,7 @@ import {
   WireIncompatibilityError,
   type WireCompatResult,
 } from './wire-probe.ts';
+import { unrefTimer, linkSignals } from './abort.ts';
 
 /** Options for resolveProvider. */
 export interface ResolvableOpts {
@@ -40,6 +41,13 @@ export interface ResolvableOpts {
   flag?: Provider;
   /** Env-var value to consider (caller passes process.env.ASTRAMEM_PROVIDER or similar). */
   env?: string;
+  /**
+   * Optional caller-supplied AbortSignal (issue #29), forwarded to the
+   * auto-probe's health check. Combined with the probe's own internal
+   * deadline timer — whichever fires first wins. Optional and
+   * backward-compatible; existing callers that omit it are unaffected.
+   */
+  signal?: AbortSignal;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +65,7 @@ const _healthCache = new Map<string, CacheEntry>();
  * Internal probe function — module-private; replaced only via _setHealthProbeFn in test env.
  * Not exported directly to prevent production callers from mutating this.
  */
-let _healthProbeFn: (url: string) => Promise<{ ok: boolean; latency_ms: number }> =
+let _healthProbeFn: (url: string, signal?: AbortSignal) => Promise<{ ok: boolean; latency_ms: number }> =
   defaultHealthProbe;
 
 /**
@@ -74,7 +82,7 @@ export function _resetHealthCache(): void {
  * TEST-ONLY — no-op outside NODE_ENV=test. Do not call in production code.
  */
 export function _setHealthProbeFn(
-  fn: (url: string) => Promise<{ ok: boolean; latency_ms: number }>,
+  fn: (url: string, signal?: AbortSignal) => Promise<{ ok: boolean; latency_ms: number }>,
 ): void {
   if (process.env['NODE_ENV'] !== 'test') return;
   _healthProbeFn = fn;
@@ -213,18 +221,18 @@ export async function resolveProvider(opts: ResolvableOpts = {}): Promise<Select
   }
 
   // 4. Auto-probe.
-  return resolveAuto();
+  return resolveAuto(opts.signal);
 }
 
 // ---------------------------------------------------------------------------
 // Auto resolution
 // ---------------------------------------------------------------------------
 
-async function resolveAuto(): Promise<SelectorResult> {
+async function resolveAuto(signal?: AbortSignal): Promise<SelectorResult> {
   // Env-first URL resolution (Finding 4 fix): env → config → default.
   const localUrl = resolveLocalUrl();
 
-  const probe = await cachedHealthProbe(localUrl);
+  const probe = await cachedHealthProbe(localUrl, signal);
 
   if (probe.ok) {
     const provider = await loadProvider('local');
@@ -280,14 +288,17 @@ function isSaasConfigured(): boolean {
   return false;
 }
 
-async function cachedHealthProbe(url: string): Promise<{ ok: boolean; latency_ms: number }> {
+async function cachedHealthProbe(
+  url: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; latency_ms: number }> {
   const now = Date.now();
   const cached = _healthCache.get(url);
   if (cached && now < cached.expires_at) {
     return { ok: cached.ok, latency_ms: cached.latency_ms };
   }
 
-  const result = await _healthProbeFn(url);
+  const result = await _healthProbeFn(url, signal);
   _healthCache.set(url, { ok: result.ok, latency_ms: result.latency_ms, expires_at: now + 5000 });
   return result;
 }
@@ -296,38 +307,76 @@ async function cachedHealthProbe(url: string): Promise<{ ok: boolean; latency_ms
 // Provider loader (lazy dynamic import — Track A files may not exist yet)
 // ---------------------------------------------------------------------------
 
-async function loadProvider(name: Provider): Promise<MemoryProvider> {
+async function loadProvider(name: Provider): Promise<ProviderHandle> {
   if (name === 'local') {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const mod = await import('../providers/local.ts');
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    return new (mod.LocalProvider as new () => MemoryProvider)();
+    return stampBackend(new (mod.LocalProvider as new () => MemoryProvider)(), name);
   }
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const mod = await import('../providers/saas.ts');
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-  return new (mod.SaasProvider as new () => MemoryProvider)();
+  return stampBackend(new (mod.SaasProvider as new () => MemoryProvider)(), name);
+}
+
+/**
+ * Stamp a readonly `backend` identity onto a resolved provider instance
+ * (issue #35). Provider instances are plain class objects, so this is a
+ * safe, additive `Object.defineProperty` — no wire/behavior change, just a
+ * convenience for callers holding only the provider handle.
+ */
+function stampBackend(provider: MemoryProvider, backend: Provider): ProviderHandle {
+  Object.defineProperty(provider, 'backend', {
+    value: backend,
+    writable: false,
+    enumerable: true,
+    configurable: false,
+  });
+  return provider as ProviderHandle;
 }
 
 // ---------------------------------------------------------------------------
 // Default health probe (real HTTP)
 // ---------------------------------------------------------------------------
 
-async function defaultHealthProbe(url: string): Promise<{ ok: boolean; latency_ms: number }> {
+/**
+ * Real HTTP health probe used as the production default for _healthProbeFn.
+ *
+ * The internal deadline timer is unref()'d (issue #29) so an abandoned probe
+ * left running after a caller's own shorter deadline fires cannot keep the
+ * event loop alive on its own. An optional externalSignal is combined with
+ * the internal deadline — whichever aborts first wins.
+ */
+async function defaultHealthProbe(
+  url: string,
+  externalSignal?: AbortSignal,
+): Promise<{ ok: boolean; latency_ms: number }> {
   const t0 = Date.now();
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
+    unrefTimer(timer);
+    const { signal: combinedSignal, dispose } = linkSignals([controller.signal, externalSignal]);
     try {
-      const res = await fetch(`${url}/health`, { signal: controller.signal });
+      const res = await fetch(`${url}/health`, { signal: combinedSignal });
       return { ok: res.ok, latency_ms: Date.now() - t0 };
     } finally {
       clearTimeout(timer);
+      dispose();
     }
   } catch {
     return { ok: false, latency_ms: Date.now() - t0 };
   }
 }
+
+/**
+ * TEST-ONLY export of the real (non-injected) probe implementation, for
+ * direct unit testing of its unref()/AbortSignal behavior (issue #29). Do
+ * not call from production code — use the injectable _healthProbeFn /
+ * _setHealthProbeFn seam instead.
+ */
+export const _defaultHealthProbe = defaultHealthProbe;
 
 // ---------------------------------------------------------------------------
 // Guard

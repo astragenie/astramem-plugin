@@ -20,8 +20,10 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+
+const PKG_VERSION = (JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8')) as { version: string }).version;
 
 const BIN = join(process.cwd(), 'bin', 'astramem');
 const BUN = 'bun';
@@ -61,10 +63,10 @@ describe('astramem dispatch (bin/astramem)', () => {
     expect(r.stdout).toMatch(/connect/);
   });
 
-  it('--version exits 0 and prints version', () => {
+  it('--version exits 0 and prints package.json version', () => {
     const r = runBin(['--version']);
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/0\.5\.2/);
+    expect(r.stdout.trim()).toBe(PKG_VERSION);
   });
 
   it('unknown subcommand exits 1', () => {

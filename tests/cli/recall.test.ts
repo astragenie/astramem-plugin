@@ -101,6 +101,21 @@ describe('runRecall', () => {
     vi.useRealTimers();
   });
 
+  it('defaults --project via resolveProject() from --cwd when not given (issue #33)', async () => {
+    const provider = createMockProvider();
+    await runRecall(['--query', 'q', '--cwd', '/home/user/projects/my-app'], { _provider: provider });
+    expect(provider._stubs.recall.mock.calls[0]![0]).toMatchObject({ project: 'my-app' });
+  });
+
+  it('an explicit --project still wins over the resolveProject default (issue #33)', async () => {
+    const provider = createMockProvider();
+    await runRecall(
+      ['--query', 'q', '--cwd', '/home/user/projects/my-app', '--project', 'explicit-project'],
+      { _provider: provider },
+    );
+    expect(provider._stubs.recall.mock.calls[0]![0]).toMatchObject({ project: 'explicit-project' });
+  });
+
   it('returns valid JSON shape even with empty hits', async () => {
     const provider = createMockProvider({
       recallResult: { hits: [], total_searched: 0, provider: 'mock' },
