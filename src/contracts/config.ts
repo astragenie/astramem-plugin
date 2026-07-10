@@ -24,7 +24,7 @@ export const AstramemConfigSchema = z.object({
   /** Logging configuration. */
   logging: z.object({
     level: z.enum(['debug', 'info', 'warn', 'error', 'silent']).default('info'),
-  }).default({}),
+  }).prefault({}),
 
   /**
    * Default project scope (issue #33). Third-tier fallback in resolveProject()
