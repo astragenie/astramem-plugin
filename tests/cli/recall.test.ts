@@ -91,14 +91,24 @@ describe('runRecall', () => {
 
   it('returns 3 when recall times out', async () => {
     vi.useFakeTimers();
-    const provider = createMockProvider({
-      recallResult: () => new Promise<never>(() => { /* hangs */ }),
-    });
-    const raceP = runRecall(['--query', 'q'], { _provider: provider });
-    await vi.advanceTimersByTimeAsync(5100);
-    const code = await raceP;
-    expect(code).toBe(3);
-    vi.useRealTimers();
+    try {
+      const provider = createMockProvider({
+        recallResult: () => new Promise<never>(() => { /* hangs */ }),
+      });
+      const raceP = runRecall(['--query', 'q'], { _provider: provider });
+      // Flush microtasks until runRecall has registered its timeout timer,
+      // then advance past the 5s deadline. Sync advanceTimersByTime — bun's
+      // vitest-compat `vi` shim has no advanceTimersByTimeAsync (the async
+      // variant this used before threw "is not a function" under `bun test`).
+      while (vi.getTimerCount() === 0) {
+        await Promise.resolve();
+      }
+      vi.advanceTimersByTime(5100);
+      const code = await raceP;
+      expect(code).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('defaults --project via resolveProject() from --cwd when not given (issue #33)', async () => {

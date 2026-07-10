@@ -327,5 +327,167 @@ describe('pending queue', () => {
       const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
       expect(files.length).toBeLessThanOrEqual(100);
     });
+
+    it('keeps the newest files when evicting on the file-count cap', () => {
+      const dir = pendingDir();
+      mkdirSync(dir, { recursive: true });
+      const now = Date.now();
+      for (let i = 0; i < 105; i++) {
+        const epoch = now - (105 - i) * 1000;
+        writeFileSync(
+          join(dir, `${epoch}-sess${i}-pre_compact.json`),
+          JSON.stringify(makePayload({ session_id: `sess-${i}` })),
+          'utf-8',
+        );
+      }
+      capEnforce();
+      const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+      expect(files.length).toBe(100);
+      // The 5 oldest (sess-0..sess-4) should be gone; the 5 newest (sess-100..sess-104) survive.
+      expect(files.some((f) => f.includes('sess0-'))).toBe(false);
+      expect(files.some((f) => f.includes('sess104-'))).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // capEnforce — byte cap
+  // -------------------------------------------------------------------------
+
+  describe('capEnforce (byte cap)', () => {
+    it(
+      'evicts oldest files when total bytes exceed 100MB, even under the file-count cap',
+      () => {
+        const dir = pendingDir();
+        mkdirSync(dir, { recursive: true });
+        const now = Date.now();
+        // Two large files, well under CAP_FILES (100) but summing over CAP_BYTES (100MB).
+        // No injection point exists for byte accounting in capEnforce — it calls statSync()
+        // on real files — so this test writes real (zero-filled) bytes rather than faking sizes.
+        const older = join(dir, `${now - 2000}-big1-pre_compact.json`);
+        const newer = join(dir, `${now - 1000}-big2-pre_compact.json`);
+        writeFileSync(older, Buffer.alloc(60 * 1024 * 1024));
+        writeFileSync(newer, Buffer.alloc(45 * 1024 * 1024));
+
+        capEnforce();
+
+        const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+        // Evicting the older 60MB file brings the total to 45MB, back under the 100MB cap,
+        // so eviction stops there — the newer file survives.
+        expect(files).toHaveLength(1);
+        expect(files[0]).toContain('big2');
+      },
+      20000,
+    );
+
+    it(
+      'does not evict when under the byte cap even if individual files are large',
+      () => {
+        const dir = pendingDir();
+        mkdirSync(dir, { recursive: true });
+        const now = Date.now();
+        writeFileSync(join(dir, `${now - 1000}-small1-pre_compact.json`), Buffer.alloc(10 * 1024 * 1024));
+        writeFileSync(join(dir, `${now}-small2-pre_compact.json`), Buffer.alloc(10 * 1024 * 1024));
+
+        capEnforce();
+
+        const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+        expect(files).toHaveLength(2);
+      },
+      20000,
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // drain — batch bound (DRAIN_BATCH_SIZE = 20)
+  // -------------------------------------------------------------------------
+
+  describe('drain (batch bound)', () => {
+    function seedFiles(dir: string, total: number, prefix: string): void {
+      mkdirSync(dir, { recursive: true });
+      const now = Date.now();
+      for (let i = 0; i < total; i++) {
+        const epoch = now - (total - i) * 1000; // ascending: index 0 is oldest
+        writeFileSync(
+          join(dir, `${epoch}-sess${i}-pre_compact.json`),
+          JSON.stringify(makePayload({ session_id: `${prefix}-${i}` })),
+          'utf-8',
+        );
+      }
+    }
+
+    it('processes at most 20 files per call, oldest-first', async () => {
+      const dir = pendingDir();
+      seedFiles(dir, 25, 'batch');
+      const { provider, calls } = makeProvider();
+      await drain(provider);
+
+      expect(calls).toHaveLength(20);
+      // Oldest 20 (batch-0..batch-19) processed, in ascending (oldest-first) order.
+      expect(calls.map((c) => c.session_id)).toEqual(
+        Array.from({ length: 20 }, (_, i) => `batch-${i}`),
+      );
+
+      const remaining = readdirSync(dir).filter((f) => f.endsWith('.json'));
+      expect(remaining).toHaveLength(5);
+    });
+
+    it('drains the remainder on a subsequent call', async () => {
+      const dir = pendingDir();
+      seedFiles(dir, 25, 'batch2');
+      const { provider, calls } = makeProvider();
+      await drain(provider);
+      await drain(provider);
+
+      expect(calls).toHaveLength(25);
+      const remaining = readdirSync(dir).filter((f) => f.endsWith('.json'));
+      expect(remaining).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // drain — rejected files are never retried
+  // -------------------------------------------------------------------------
+
+  describe('drain (rejected files are not retried)', () => {
+    it('does not re-process a file already moved to rejected/', async () => {
+      enqueue(makePayload({ session_id: 'rej-once' }));
+      const { provider: badProvider } = makeProvider({
+        onCall: async () => {
+          throw new DeterministicError('Unauthorized', 401);
+        },
+      });
+      await drain(badProvider);
+
+      const rejDir = rejectedDir();
+      expect(readdirSync(rejDir).filter((f) => f.endsWith('.json'))).toHaveLength(1);
+
+      const { provider: goodProvider, calls } = makeProvider();
+      await drain(goodProvider);
+
+      // Rejected file lives outside pendingDir()'s listing, so a later drain never sees it.
+      expect(calls).toHaveLength(0);
+      expect(readdirSync(rejDir).filter((f) => f.endsWith('.json'))).toHaveLength(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // stats — oldest ordering
+  // -------------------------------------------------------------------------
+
+  describe('stats (oldest ordering)', () => {
+    it('oldest_epoch_ms is the minimum epoch among multiple files, independent of write order', () => {
+      const dir = pendingDir();
+      mkdirSync(dir, { recursive: true });
+      const now = Date.now();
+      // Written out of chronological order to prove stats() scans all files rather than
+      // trusting readdir() order or the last file written.
+      writeFileSync(join(dir, `${now - 1000}-newer-pre_compact.json`), JSON.stringify(makePayload()), 'utf-8');
+      writeFileSync(join(dir, `${now - 9000}-oldest-pre_compact.json`), JSON.stringify(makePayload()), 'utf-8');
+      writeFileSync(join(dir, `${now - 5000}-middle-pre_compact.json`), JSON.stringify(makePayload()), 'utf-8');
+
+      const s = stats();
+      expect(s.count).toBe(3);
+      expect(s.oldest_epoch_ms).toBe(now - 9000);
+    });
   });
 });
