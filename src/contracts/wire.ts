@@ -67,7 +67,7 @@ export const IngestPayloadSchema = z.object({
   /** Optional: provider confidence 0..1. */
   confidence: z.number().min(0).max(1).optional(),
   /** Optional: additional key/value metadata. */
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type IngestPayload = z.infer<typeof IngestPayloadSchema>;
