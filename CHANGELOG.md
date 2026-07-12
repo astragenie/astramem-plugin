@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.2] — 2026-07-12
+
+Fix ingest starvation: auto-capture was landing zero memories in production.
+
+### Fixed
+- **At-close transcript capture** (#394) — both `SessionEnd` (`session-end-summary.sh`) and `SubagentStop` (`subagent-stop-capture.sh`) hooks previously handed the daemon a *path* to the ephemeral subagent transcript for deferred/async ingest; the file was deleted before the daemon could read it, so every capture silently failed (`ingest.log`: "transcript file not found"). Both hooks now capture the transcript content synchronously at close instead of deferring, closing the starvation window.
+- CI: GitHub Packages auth fix for `bun install`, hands-off auto-merge-on-green workflow, macOS dropped from the CI matrix, docs-only fast-path.
+
+### Notes
+- **Version 0.6.1 was poisoned**: this fix (`43d94ec`) merged into `main` *after* `main` had already been bumped to 0.6.1 in a prior commit, so every plugin cache that fetched 0.6.1 pre-fix never re-fetches — the version number never changes. 0.6.2 exists specifically to invalidate those stale caches. If you have 0.6.1 installed, reinstall/update the plugin to pick this up.
+
 ## [0.6.1] — 2026-07-07
 
 Read-side session context (issue #31).
