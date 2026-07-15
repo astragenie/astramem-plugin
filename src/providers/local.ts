@@ -60,6 +60,8 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  // Don't let a pending timeout keep the process alive (ingest is fire-and-forget).
+  timer.unref?.();
   try {
     const res = await fetch(url, { ...init, signal: ctrl.signal });
     return res;

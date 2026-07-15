@@ -1,0 +1,8 @@
+# Normalize line endings to LF on checkout, regardless of platform/core.autocrlf.
+# Without this, Windows checkouts (core.autocrlf=true) convert LF -> CRLF, which
+# breaks the shebang/execution of POSIX shell scripts and CLI entry points.
+* text=auto eol=lf
+
+# Explicit: shell scripts and bin/ CLI dispatchers must never be CRLF.
+*.sh text eol=lf
+bin/* text eol=lf
