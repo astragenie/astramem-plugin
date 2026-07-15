@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0] — 2026-07-15
+
+Universal memory: make any Claude Code agent smarter via the MCP path — no crew/runner needed.
+
+### Added
+- **`using-memory` skill** — auto-triggers at the start of substantial work and runs the full loop: load `agent_profile` (role track record incl. corrections) + `recall_memory`, use them, `submit_feedback` on what helped, `remember` what is new. The reliability layer the model-discretionary MCP tools lack.
+- **README “Universal memory: make any agent smarter”** — MCP setup (`MEMORY_API_URL`/`MEMORY_BEARER`), tool table, three reliability nudges (skill / CLAUDE.md line / SubagentStart hook), and the recall→use→feedback→remember loop. All fail-silent.
+
 ## [0.6.2] — 2026-07-12
 
 Fix ingest starvation: auto-capture was landing zero memories in production.
