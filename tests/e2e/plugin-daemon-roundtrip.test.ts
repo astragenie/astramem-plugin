@@ -131,9 +131,18 @@ async function waitForHealth(maxMs = 15_000): Promise<void> {
   );
 }
 
-/** Sum of all job-state counts from /health's queue block (evidence the ingest was enqueued). */
+/** Sum of all job-state counts from the daemon's queue block (evidence the
+ *  ingest was enqueued). Reads /health/full (Bearer-authed), NOT /health:
+ *  since daemon P1.3 (2026-07-15 stabilization) /health serves a ~30s-stale
+ *  pre-computed snapshot — a job enqueued milliseconds ago is invisible
+ *  there until the next refresh, which is exactly the freshness this wait
+ *  loop needs. /health/full always recomputes. Falls back to /health's
+ *  block for older daemons that don't have the route yet (404). */
 async function totalQueueDepth(): Promise<number> {
-  const res = await fetch(`${BASE_URL}/health`);
+  let res = await fetch(`${BASE_URL}/health/full`, {
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
+  if (res.status === 404) res = await fetch(`${BASE_URL}/health`);
   if (!res.ok) return -1;
   const body = (await res.json()) as { queue?: Record<string, number> };
   if (!body.queue) return -1;
@@ -149,7 +158,7 @@ async function waitForQueueActivity(maxMs = 8_000): Promise<void> {
     await sleep(200);
   }
   throw new Error(
-    `waitForQueueActivity: condition="/health queue depth > 0 (ingest enqueued a distill job)" ` +
+    `waitForQueueActivity: condition="queue depth > 0 via /health/full (ingest enqueued a distill job)" ` +
       `elapsed=${Date.now() - start}ms last state: depth=${lastDepth}`,
   );
 }
