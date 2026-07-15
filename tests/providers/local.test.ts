@@ -48,7 +48,7 @@ describe('LocalProvider — bearer from MEMORY_BEARER env', () => {
       const pathname = new URL(url).pathname;
       if (pathname === '/recall') {
         return new Response(
-          JSON.stringify({ hits: [], total_searched: 0, provider: 'local' }),
+          JSON.stringify({ schema: 'astramem-retrieval-result@1', hits: [], total: 0 }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
@@ -84,7 +84,7 @@ describe('LocalProvider — bearer from MEMORY_BEARER env', () => {
   });
 });
 
-describe('LocalProvider — recall body shape (FEAT-423)', () => {
+describe('LocalProvider — recall body shape (FEAT-532 canonical envelope)', () => {
   let origFetch: typeof globalThis.fetch;
   let capturedBody: Record<string, unknown> | undefined;
 
@@ -97,7 +97,7 @@ describe('LocalProvider — recall body shape (FEAT-423)', () => {
         capturedBody = JSON.parse(init.body as string) as Record<string, unknown>;
       }
       return new Response(
-        JSON.stringify({ hits: [], total_searched: 0, provider: 'local' }),
+        JSON.stringify({ schema: 'astramem-retrieval-result@1', hits: [], total: 0 }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
     }) as typeof fetch;
@@ -105,12 +105,13 @@ describe('LocalProvider — recall body shape (FEAT-423)', () => {
 
   afterEach(() => { globalThis.fetch = origFetch; });
 
-  it('nests repo/project/agent under a `filters` object — not flat (issue #56 no-op fix)', async () => {
+  it('sends canonical text/mode/limit, nests repo/project/agent under `filters` (issue #56 no-op fix carried forward)', async () => {
     const provider = new LocalProvider('http://127.0.0.1:19999');
     await provider.recall({ query: 'q', k: 5, repo: 'r1', project: 'runner-plugin', agent: 'crew:reviewer' });
     expect(capturedBody).toEqual({
-      query: 'q',
-      k: 5,
+      text: 'q',
+      mode: 'hybrid',
+      limit: 5,
       filters: { repo: 'r1', project: 'runner-plugin', agent: 'crew:reviewer' },
     });
     // Guard against regression: scoping must NOT appear at the top level.
@@ -118,10 +119,10 @@ describe('LocalProvider — recall body shape (FEAT-423)', () => {
     expect(capturedBody).not.toHaveProperty('agent');
   });
 
-  it('omits `filters` entirely for an unscoped recall (byte-identical to legacy body)', async () => {
+  it('omits `filters` entirely for an unscoped recall', async () => {
     const provider = new LocalProvider('http://127.0.0.1:19999');
     await provider.recall({ query: 'q', k: 5 });
-    expect(capturedBody).toEqual({ query: 'q', k: 5 });
+    expect(capturedBody).toEqual({ text: 'q', mode: 'hybrid', limit: 5 });
     expect(capturedBody).not.toHaveProperty('filters');
   });
 

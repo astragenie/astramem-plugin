@@ -11,12 +11,18 @@
  *   - GET  /health             → HealthController
  *   - GET  /version            → HealthController
  *
- * Wire mapping (FEAT 4a §4.2.4 — URL fix; shapes mapped in this provider):
- *   - recall():   RecallRequest {query,k,repo,project,agent} → SaaS SearchRequest
- *                 {query, top_k, source, project_id, agent}; SaaS SearchResponse
- *                 {results,total,mode} → RecallResponse {hits,total_searched,provider}
- *                 (agent forwarded defensively — SaaS agent-filter support is
- *                 pending server-side, tracked in astragenie/memory, FEAT-424)
+ * Wire mapping (FEAT-532 — canonical adoption; shapes mapped in this provider):
+ *   - recall():   RecallRequest {query,k,repo,project,agent} → canonical
+ *                 astramem-retrieval-query@1 {text,mode,limit,filters:{project,agent}}
+ *                 (ADR-005; @astragenie/astramem-contracts). `repo` has no home in
+ *                 the canonical filters object — forwarded as the legacy top-level
+ *                 `source` field, which SearchRequest.cs still recognises alongside
+ *                 the canonical aliases (WithCanonicalAliasesApplied). Response is
+ *                 parsed with the canonical astramem-retrieval-result@1 envelope
+ *                 (RetrievalResultV1Schema) then mapped down to the plugin's
+ *                 unified RecallResponse {hits,total_searched,provider}. Cloud
+ *                 already speaks both sides of this contract natively — no
+ *                 server-side change needed (astragenie/memory #641/#759/#801).
  *   - remember(): IngestPayload {id,type,text,...} → SaaS StoreMemoryRequest
  *                 {content,type,project_id,...}. project_id is REQUIRED by SaaS;
  *                 derived from metadata.project_id → metadata.project → basename(cwd)
@@ -38,16 +44,17 @@
  */
 
 import { basename } from 'node:path';
-import { z } from 'zod';
 import type { MemoryProvider } from '../contracts/provider.ts';
 import type {
   IngestPayload,
   RecallRequest,
   RecallResponse,
+  RecallHit,
   HealthResponse,
   TranscriptIngestPayload,
 } from '../contracts/wire.ts';
 import { RecallResponseSchema, HealthResponseSchema, WIRE_VERSION } from '../contracts/wire.ts';
+import { RetrievalResultV1Schema, type RetrievalQueryV1, type RetrievalResultV1 } from '@astragenie/astramem-contracts/zod';
 import { DeterministicError, TransientError } from '../lib/errors.ts';
 import { readAuth } from '../../lib/clerkAuthFile.ts';
 import { resolveEnv } from '../lib/env.ts';
@@ -116,31 +123,54 @@ async function buildHeaders(bearerOverride?: string): Promise<Record<string, str
 }
 
 // ---------------------------------------------------------------------------
-// SaaS wire shapes (provider-local — the SaaS REST contract differs from the
-// unified plugin wire shapes in contracts/wire.ts; this provider owns the map).
-// Mirrors C:\work\mega\memory\src\AstraMemory.Modules.Search\Application\SearchQuery.cs
-// and Modules.Memories\Models\MemoryModels.cs (StoreMemoryRequest).
+// Canonical retrieval mapping (FEAT-532 — ADR-005 astramem-retrieval@1).
+// Cloud's POST /memories/search speaks this envelope natively on both request
+// and response (SearchQuery.cs WithCanonicalAliasesApplied / SearchResponse) —
+// this provider builds the canonical request and parses the canonical
+// response, then maps down to the plugin's unified RecallRequest/RecallResponse
+// (contracts/wire.ts), which stays the plugin's stable public shape.
 // ---------------------------------------------------------------------------
 
-/** Result item subset we consume from SaaS POST /memories/search. Passthrough
- * of unknown fields is fine — .parse strips them (non-strict). */
-const SaasSearchResultItemSchema = z.object({
-  id: z.union([z.string(), z.number()]).transform(String),
-  type: z.string(),
-  content: z.string(),
-  importance: z.number().optional(),
-  rank_score: z.number(),
-  source: z.string().nullable().optional(),
-  confidence_score: z.number().optional(),
-});
+/**
+ * Build the canonical astramem-retrieval-query@1 body from the plugin's
+ * unified RecallRequest. `repo` has no home in the canonical `filters` object
+ * (retrieval-query.v1 defines only {type,scope,project,agent,entity,since,as_of})
+ * — forwarded as the legacy top-level `source` field instead, which
+ * SearchRequest.cs still recognises (not part of the canonical alias
+ * coalescing, but a real field on the same DTO).
+ */
+function buildCanonicalRecallBody(req: RecallRequest): Record<string, unknown> {
+  const core: RetrievalQueryV1 = {
+    text: req.query,
+    mode: 'hybrid',
+    limit: req.k,
+  };
+  const filters: NonNullable<RetrievalQueryV1['filters']> = {};
+  if (req.project !== undefined) filters.project = req.project;
+  if (req.agent !== undefined) filters.agent = req.agent;
+  const body: Record<string, unknown> = {
+    ...core,
+    ...(Object.keys(filters).length > 0 ? { filters } : {}),
+  };
+  if (req.repo !== undefined) body['source'] = req.repo;
+  return body;
+}
 
-const SaasSearchResponseSchema = z.object({
-  results: z.array(SaasSearchResultItemSchema),
-  total: z.number().int(),
-});
+/** Map one astramem-retrieval-result@1 hit down to the plugin's unified RecallHit. */
+function mapCanonicalHit(hit: RetrievalResultV1['hits'][number]): RecallHit {
+  return {
+    id: hit.id,
+    type: hit.type,
+    text: hit.text,
+    score: clamp01(hit.score),
+    ...(hit.source != null ? { source: hit.source } : {}),
+    ...(hit.importance !== undefined ? { importance: clamp01(hit.importance) } : {}),
+    ...(hit.confidence !== undefined ? { confidence: clamp01(hit.confidence) } : {}),
+  };
+}
 
-/** Clamp to the RecallHit score domain [0,1] — rank_score is a weighted blend
- * that should already be in-domain, but the reranker path may perturb it. */
+/** Clamp to the RecallHit score domain [0,1] — the fused score should already
+ * be in-domain, but the reranker path may perturb it. */
 function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
@@ -284,21 +314,7 @@ export class SaasProvider implements MemoryProvider {
 
   async recall(req: RecallRequest): Promise<RecallResponse> {
     const headers = await buildHeaders();
-    // Map unified RecallRequest → SaaS SearchRequest. top_k takes precedence
-    // over limit server-side and is capped at 50 there; repo maps to `source`
-    // (the SaaS field for originating repo/file) and project to project_id.
-    // project/agent forward string|string[] verbatim (RecallRequest allows
-    // both since v0.6.0) — the SaaS side is expected to accept the same union.
-    const body: Record<string, unknown> = {
-      query: req.query,
-      top_k: req.k,
-    };
-    if (req.project !== undefined) body['project_id'] = req.project;
-    if (req.repo !== undefined) body['source'] = req.repo;
-    // agent was previously dropped here (FEAT-424) — SaaS agent-filter support
-    // is pending server-side (astragenie/memory); forwarded defensively so the
-    // plugin is ready the moment the SaaS API accepts it.
-    if (req.agent !== undefined) body['agent'] = req.agent;
+    const body = buildCanonicalRecallBody(req);
 
     const res = await fetchWithTimeout(
       `${this.baseUrl}/memories/search`,
@@ -311,19 +327,11 @@ export class SaasProvider implements MemoryProvider {
     );
     await assertOk(res, 'recall');
     const json: unknown = await res.json();
-    const saas = SaasSearchResponseSchema.parse(json);
-    // Map SaaS SearchResponse → unified RecallResponse.
+    const canonical = RetrievalResultV1Schema.parse(json);
+    // Map astramem-retrieval-result@1 → unified RecallResponse.
     const mapped: RecallResponse = {
-      hits: saas.results.map((r) => ({
-        id: r.id,
-        type: r.type,
-        text: r.content,
-        score: clamp01(r.rank_score),
-        ...(r.source != null ? { source: r.source } : {}),
-        ...(r.importance !== undefined ? { importance: clamp01(r.importance) } : {}),
-        ...(r.confidence_score !== undefined ? { confidence: clamp01(r.confidence_score) } : {}),
-      })),
-      total_searched: saas.total,
+      hits: canonical.hits.map(mapCanonicalHit),
+      total_searched: canonical.total,
       provider: 'saas',
     };
     return RecallResponseSchema.parse(mapped);

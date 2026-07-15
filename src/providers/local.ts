@@ -8,6 +8,18 @@
  * `<unifiedConfigDir()>/secrets.env` (populated by astramem-local) with
  * MEMORY_BEARER env-var fallback.
  *
+ * Wire mapping (FEAT-532 — canonical adoption): recall() sends the canonical
+ * astramem-retrieval-query@1 envelope {text,mode,limit,filters:{repo,project,
+ * agent}} (ADR-005; @astragenie/astramem-contracts) — the daemon's POST
+ * /recall already accepts the canonical text/limit/filters.* aliases
+ * (src/server/routes/search.ts RecallBodySchema, #112 AC-2). `repo` is a
+ * local-only filters extension beyond the published retrieval-query.v1
+ * schema (RepoFilterSchema, FEAT-429) — cloud has no equivalent. The
+ * response is parsed with the canonical astramem-retrieval-result@1 envelope
+ * (RetrievalResultV1Schema); the daemon's /recall RESPONSE side is being
+ * wired separately (FEAT-532 slice L1) — until that lands this parse targets
+ * the future shape, not what the daemon returns today.
+ *
  * Timeouts:
  *   ingest  — 2 s (fire-and-forget; retries 1× on 5xx / network error)
  *   recall  — 5 s
@@ -24,10 +36,12 @@ import type {
   IngestPayload,
   RecallRequest,
   RecallResponse,
+  RecallHit,
   HealthResponse,
   TranscriptIngestPayload,
 } from '../contracts/wire.ts';
 import { RecallResponseSchema, HealthResponseSchema } from '../contracts/wire.ts';
+import { RetrievalResultV1Schema, type RetrievalQueryV1, type RetrievalResultV1 } from '@astragenie/astramem-contracts/zod';
 import { DeterministicError, TransientError } from '../lib/errors.ts';
 import { readLocalBearer } from '../lib/secrets.ts';
 import { resolveEnv } from '../lib/env.ts';
@@ -102,6 +116,55 @@ async function assertOk(res: Response, context: string): Promise<void> {
     `${context}: ${res.status} ${statusText}`,
     res.status,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Canonical retrieval mapping (FEAT-532 — ADR-005 astramem-retrieval@1).
+// This provider builds the canonical request and parses the canonical
+// response, then maps down to the plugin's unified RecallRequest/RecallResponse
+// (contracts/wire.ts), which stays the plugin's stable public shape.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the canonical astramem-retrieval-query@1 body from the plugin's
+ * unified RecallRequest. `repo` is forwarded inside `filters` — the daemon's
+ * RecallBodySchema accepts it as a local-only extension of the published
+ * canonical schema (FEAT-429 RepoFilterSchema); omitted entirely when no
+ * filter is set so an unscoped recall stays a minimal body.
+ */
+function buildCanonicalRecallBody(req: RecallRequest): Record<string, unknown> {
+  const core: RetrievalQueryV1 = {
+    text: req.query,
+    mode: 'hybrid',
+    limit: req.k,
+  };
+  const filters: NonNullable<RetrievalQueryV1['filters']> & { repo?: string } = {};
+  if (req.repo !== undefined) filters.repo = req.repo;
+  if (req.project !== undefined) filters.project = req.project;
+  if (req.agent !== undefined) filters.agent = req.agent;
+  return {
+    ...core,
+    ...(Object.keys(filters).length > 0 ? { filters } : {}),
+  };
+}
+
+/** Map one astramem-retrieval-result@1 hit down to the plugin's unified RecallHit. */
+function mapCanonicalHit(hit: RetrievalResultV1['hits'][number]): RecallHit {
+  return {
+    id: hit.id,
+    type: hit.type,
+    text: hit.text,
+    score: clamp01(hit.score),
+    ...(hit.source != null ? { source: hit.source } : {}),
+    ...(hit.importance !== undefined ? { importance: clamp01(hit.importance) } : {}),
+    ...(hit.confidence !== undefined ? { confidence: clamp01(hit.confidence) } : {}),
+  };
+}
+
+/** Clamp to the RecallHit score domain [0,1] — the fused score should already
+ * be in-domain, but a rerank/preset path may perturb it. */
+function clamp01(n: number): number {
+  return Math.min(1, Math.max(0, n));
 }
 
 // ---------------------------------------------------------------------------
@@ -216,21 +279,7 @@ export class LocalProvider implements MemoryProvider {
 
   async recall(req: RecallRequest): Promise<RecallResponse> {
     const headers = await buildHeaders();
-    // FEAT-423: the daemon's POST /recall reads scoping under a nested
-    // `filters` object ({ repo, project, agent }) — NOT top-level. Sending
-    // repo/project/agent flat (the prior shape) made every filter a silent
-    // no-op (issue #56: "any --project value returns everything"). Build the
-    // filters object explicitly and omit it entirely when empty so an
-    // unscoped recall stays byte-identical to before.
-    const filters: Record<string, unknown> = {};
-    if (req.repo !== undefined) filters['repo'] = req.repo;
-    if (req.project !== undefined) filters['project'] = req.project;
-    if (req.agent !== undefined) filters['agent'] = req.agent;
-    const body = {
-      query: req.query,
-      k: req.k,
-      ...(Object.keys(filters).length > 0 ? { filters } : {}),
-    };
+    const body = buildCanonicalRecallBody(req);
     const res = await fetchWithTimeout(
       `${this.baseUrl}/recall`,
       {
@@ -242,7 +291,14 @@ export class LocalProvider implements MemoryProvider {
     );
     await assertOk(res, 'recall');
     const json: unknown = await res.json();
-    return RecallResponseSchema.parse(json);
+    const canonical = RetrievalResultV1Schema.parse(json);
+    // Map astramem-retrieval-result@1 → unified RecallResponse.
+    const mapped: RecallResponse = {
+      hits: canonical.hits.map(mapCanonicalHit),
+      total_searched: canonical.total,
+      provider: 'local',
+    };
+    return RecallResponseSchema.parse(mapped);
   }
 
   async remember(req: IngestPayload): Promise<void> {
