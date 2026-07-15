@@ -71,21 +71,22 @@ describe('SaasProvider — SaaS route + wire mapping (FEAT 4a §4.2.4)', () => {
     expect(new URL(capturedUrl!).pathname).toBe('/memories/search');
   });
 
-  it('recall() maps k → top_k and query passes through', async () => {
+  it('recall() sends the canonical text/mode/limit envelope — repo forwarded as legacy source (FEAT-532)', async () => {
     const provider = new SaasProvider(SAAS_MOCK_URL);
     await provider.recall({ query: 'q1', k: 7, project: 'proj-a', repo: 'repo-b' });
     expect(capturedBody).toMatchObject({
-      query: 'q1',
-      top_k: 7,
-      project_id: 'proj-a',
+      text: 'q1',
+      mode: 'hybrid',
+      limit: 7,
+      filters: { project: 'proj-a' },
       source: 'repo-b',
     });
   });
 
-  it('recall() forwards agent verbatim (FEAT-424) — previously dropped', async () => {
+  it('recall() forwards agent verbatim under filters (FEAT-424)', async () => {
     const provider = new SaasProvider(SAAS_MOCK_URL);
     await provider.recall({ query: 'q1', k: 7, agent: 'claude-code' });
-    expect(capturedBody).toMatchObject({ agent: 'claude-code' });
+    expect(capturedBody).toMatchObject({ filters: { agent: 'claude-code' } });
   });
 
   it('recall() forwards array project/agent verbatim (v0.6.0 multi-value)', async () => {
@@ -97,25 +98,28 @@ describe('SaasProvider — SaaS route + wire mapping (FEAT 4a §4.2.4)', () => {
       agent: ['claude-code', 'cursor'],
     });
     expect(capturedBody).toMatchObject({
-      project_id: ['proj-a', 'proj-b'],
-      agent: ['claude-code', 'cursor'],
+      filters: {
+        project: ['proj-a', 'proj-b'],
+        agent: ['claude-code', 'cursor'],
+      },
     });
   });
 
-  it('recall() omits agent key when req.agent is undefined', async () => {
+  it('recall() omits filters entirely when project/agent/repo are all undefined', async () => {
     const provider = new SaasProvider(SAAS_MOCK_URL);
     await provider.recall(SAMPLE_RECALL);
-    expect(capturedBody).not.toHaveProperty('agent');
+    expect(capturedBody).not.toHaveProperty('filters');
+    expect(capturedBody).not.toHaveProperty('source');
   });
 
-  it('recall() maps SaaS SearchResponse to unified RecallResponse', async () => {
+  it('recall() maps the canonical astramem-retrieval-result@1 envelope to unified RecallResponse', async () => {
     const provider = new SaasProvider(SAAS_MOCK_URL);
     const res = await provider.recall(SAMPLE_RECALL);
     expect(res.provider).toBe('saas');
     expect(res.total_searched).toBe(100);
     expect(res.hits[0]).toMatchObject({
-      id: '00000000-0000-0000-0000-000000000001',
-      type: 'transcript',
+      id: '00000000-0000-4000-8000-000000000001',
+      type: 'fact',
       text: 'relevant memory',
       score: 0.91,
     });
@@ -287,7 +291,7 @@ describe('SaasProvider — Clerk auth file bearer', () => {
       const pathname = new URL(url).pathname;
       if (pathname === '/memories/search') {
         return new Response(
-          JSON.stringify({ results: [], total: 0, mode: 'hybrid' }),
+          JSON.stringify({ schema: 'astramem-retrieval-result@1', hits: [], total: 0 }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }

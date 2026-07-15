@@ -28,38 +28,54 @@ export const SAMPLE_RECALL = {
   k: 3,
 } as const;
 
-/** Minimal valid RecallResponse body served by mock (local daemon shape). */
+/** Minimal valid astramem-retrieval-result@1 envelope served by the local
+ * daemon mock (FEAT-532 — the daemon's POST /recall RESPONSE is target-state
+ * canonical; live shape lands with slice L1). */
 export const MOCK_RECALL_RESPONSE = {
+  schema: 'astramem-retrieval-result@1',
+  query: { text: 'contract test query', mode: 'hybrid' },
   hits: [
     {
-      id: 'hit-1',
-      type: 'transcript',
+      id: '11111111-1111-4111-8111-111111111111',
+      type: 'fact',
       text: 'relevant memory',
       score: 0.91,
-    },
-  ],
-  total_searched: 100,
-  provider: 'test',
-} as const;
-
-/** SaaS-shaped POST /memories/search response body served by mock. */
-export const MOCK_SAAS_SEARCH_RESPONSE = {
-  results: [
-    {
-      id: '00000000-0000-0000-0000-000000000001',
-      type: 'transcript',
-      scope: 'private',
-      content: 'relevant memory',
-      importance: 0.5,
-      similarity: 0.88,
-      rank_score: 0.91,
-      created_at: '2026-07-04T00:00:00Z',
-      metadata: null,
-      confidence_score: 0.5,
+      explanation: {
+        final: 0.91,
+        signals: { bm25: { raw: 0.91, weight: 1, final: 0.91 } },
+      },
     },
   ],
   total: 100,
-  mode: 'hybrid',
+} as const;
+
+/** astramem-retrieval-result@1 envelope served by the SaaS mock for
+ * POST /memories/search — matches cloud's real response shape (SearchQuery.cs
+ * SearchResponse, CONTRACT-FREEZE §1, already shipped). */
+export const MOCK_SAAS_SEARCH_RESPONSE = {
+  schema: 'astramem-retrieval-result@1',
+  query: { text: 'contract test query', mode: 'hybrid' },
+  hits: [
+    {
+      id: '00000000-0000-4000-8000-000000000001',
+      type: 'fact',
+      text: 'relevant memory',
+      score: 0.91,
+      scope: 'private',
+      explanation: {
+        final: 0.91,
+        signals: {
+          vector: { raw: 0.88, weight: 0.5, final: 0.44 },
+          keyword: { raw: 0.94, weight: 0.5, final: 0.47 },
+        },
+      },
+      importance: 0.5,
+      confidence: 0.5,
+      created_at: '2026-07-04T00:00:00Z',
+      metadata: null,
+    },
+  ],
+  total: 100,
 } as const;
 
 /** Per-backend route/shape map so one contract suite can exercise providers
