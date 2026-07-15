@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runIngestTranscript } from '../../src/cli/ingest-transcript.ts';
 import { createMockProvider, createFailingProvider } from './mock-provider.ts';
-import type { TranscriptIngestPayload } from '../../src/contracts/wire.ts';
+import type { TranscriptIngestPayload, TranscriptTurn } from '../../src/contracts/wire.ts';
 import { TransientError } from '../../src/lib/errors.ts';
 import { pendingDir } from '../../src/lib/pending.ts';
 
@@ -163,9 +163,9 @@ describe('runIngestTranscript', () => {
     expect(provider._stubs.ingestTranscript).toHaveBeenCalledOnce();
     const envelope = provider._stubs.ingestTranscript.mock.calls[0]![0] as TranscriptIngestPayload;
     expect(envelope.turns).toHaveLength(2);
-    expect(envelope.turns.every((t) => t.role === 'user' || t.role === 'assistant')).toBe(true);
-    expect(envelope.turns[0]!.text).toBe('user message');
-    expect(envelope.turns[1]!.text).toBe('assistant reply');
+    expect((envelope.turns ?? []).every((t: TranscriptTurn) => t.role === 'user' || t.role === 'assistant')).toBe(true);
+    expect(envelope.turns?.[0]!.text).toBe('user message');
+    expect(envelope.turns?.[1]!.text).toBe('assistant reply');
   });
 
   // -------------------------------------------------------------------------
@@ -325,7 +325,11 @@ describe('runIngestTranscript', () => {
   // Empty transcript (no user/assistant lines)
   // -------------------------------------------------------------------------
 
-  it('sends empty turns envelope when transcript has no user/assistant lines', async () => {
+  // The canonical astramem-capture@1 envelope (@astragenie/astramem-contracts)
+  // requires turns.length >= 1 when the key is present — turns: [] is not a
+  // valid way to say "no turns". The envelope still gets sent (provider still
+  // called), it just omits the key entirely rather than sending an empty array.
+  it('omits turns key when transcript has no user/assistant lines', async () => {
     const filePath = writeTranscript([
       { role: 'system', text: 'only system' },
       { role: 'tool', text: 'tool' },
@@ -334,7 +338,7 @@ describe('runIngestTranscript', () => {
     const code = await runIngestTranscript(baseArgs(filePath), { _provider: provider });
     expect(code).toBe(0);
     const envelope = provider._stubs.ingestTranscript.mock.calls[0]![0] as TranscriptIngestPayload;
-    expect(envelope.turns).toHaveLength(0);
+    expect(envelope.turns).toBeUndefined();
     expect(envelope.client_scrub_hits).toBe(0);
   });
 

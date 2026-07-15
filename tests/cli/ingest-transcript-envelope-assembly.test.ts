@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { runIngestTranscript } from '../../src/cli/ingest-transcript.ts';
 import { createMockProvider } from './mock-provider.ts';
 import { TranscriptIngestPayloadSchema, WIRE_VERSION } from '../../src/contracts/wire.ts';
-import type { TranscriptIngestPayload } from '../../src/contracts/wire.ts';
+import type { TranscriptIngestPayload, TranscriptTurn } from '../../src/contracts/wire.ts';
 
 // ---------------------------------------------------------------------------
 // Isolation helpers (mirrors tests/cli/ingest-transcript.test.ts convention)
@@ -142,7 +142,7 @@ describe('envelope assembly (runIngestTranscript) — SLICE-SMOKE-2', () => {
       ]);
       const envelope = await assemble(path);
 
-      const allText = envelope.turns.map((t) => t.text).join('\n');
+      const allText = (envelope.turns ?? []).map((t: TranscriptTurn) => t.text).join('\n');
       expect(allText).not.toContain(FAKE_AWS_KEY);
       expect(allText).not.toContain('SuperSecretValue123');
 
@@ -180,7 +180,7 @@ describe('envelope assembly (runIngestTranscript) — SLICE-SMOKE-2', () => {
       const envelope = await assemble(path, ['--max-turns', '20']);
 
       expect(envelope.turns).toHaveLength(5);
-      envelope.turns.forEach((turn, i) => {
+      (envelope.turns ?? []).forEach((turn: TranscriptTurn, i: number) => {
         expect(turn.role).toBe(script[i]!.role);
         expect(turn.text).toBe(script[i]!.text);
       });

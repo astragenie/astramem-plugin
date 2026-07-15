@@ -3,6 +3,7 @@
 // Decisions 7-9 from memory-plugin#8: unified shape with required id/type/text/score;
 // optional source/importance/confidence.
 import { z } from 'zod';
+import { CaptureEnvelopeV1Schema, type CaptureEnvelopeV1 } from '@astragenie/astramem-contracts/zod';
 
 // ---------------------------------------------------------------------------
 // Wire version — bump when the canonical envelope shape changes in a
@@ -88,48 +89,32 @@ export type RecallResponse = z.infer<typeof RecallResponseSchema>;
 // ---------------------------------------------------------------------------
 // Transcript ingest (ingest-transcript subcommand — FEAT 4a §4.1.1)
 // ---------------------------------------------------------------------------
+// Sourced from @astragenie/astramem-contracts — this endpoint IS the
+// astramem-capture@1 envelope (ADR-008); the canonical schema's own field
+// comment for wire_version literally says "Mirrors WIRE_VERSION_PATTERN in
+// contracts/wire.ts", i.e. this file used to be the thing it now imports.
+// Kept under the plugin's historical names (TranscriptIngestPayload*) so
+// provider.ts / local.ts / saas.ts / cli/ingest-transcript.ts / lib/pending.ts
+// don't need renaming.
+//
+// One deliberate divergence, NOT resolved by a straight re-export: canonical
+// makes `turns` optional (to support the turns-less 'events' kind) and, when
+// present, requires min 1 item — it has no representation for "an envelope
+// with zero turns". The plugin needs exactly that (a session with no
+// user/assistant lines still gets an envelope — see
+// tests/cli/ingest-transcript.test.ts "omits turns key..."). The fix lives at
+// the producer: cli/ingest-transcript.ts omits the `turns` key entirely
+// instead of sending `turns: []`, which stays valid against the canonical
+// schema. providers/local.ts and providers/saas.ts preserve that omission
+// through their scrub-and-repost step. See tests/contracts/transcript-wire.test.ts
+// for the corrected contract (turns omitted = valid, turns: [] = invalid).
+export const TranscriptIngestPayloadSchema = CaptureEnvelopeV1Schema;
+export type TranscriptIngestPayload = CaptureEnvelopeV1;
 
-export const TranscriptTurnSchema = z.object({
-  role: z.enum(['user', 'assistant']),
-  text: z.string(),
-  ts: z.string().optional(), // ISO-8601 if present
-});
-
-export type TranscriptTurn = z.infer<typeof TranscriptTurnSchema>;
-
-// Aligned with SaaS canonical IngestTranscriptRequest at:
-//   C:\work\mega\memory\src\AstraMemory.Api\Models\IngestTranscriptRequest.cs
-// Plus Slice 3.5 additions (client_scrub_version, client_scrub_hits_by_label, wire_version).
-// wire_version is REQUIRED (Phase 3 Stage 1 — FEAT 4a) — server uses it for
-// daemon-divergence detection; nullable would defeat that purpose.
-// .strict() rejects unknown fields — callers must map explicitly; prevents
-// accidental PII leakage through unrecognised keys, and forces consumers to
-// add new optional fields rather than forwarding arbitrary objects.
-export const TranscriptIngestPayloadSchema = z.object({
-  /** Wire format version — must equal WIRE_VERSION. Pattern: ASCII digits only, no
-   * leading zeros. Matches SaaS .NET DTO regex authoritatively (see memory
-   * IngestTranscriptRequest.cs M-R7). \d would match Unicode-category-Decimal
-   * (e.g. Arabic-Indic ١) — undesirable for a wire dispatch field. */
-  wire_version: z.string().regex(/^v(?:0|[1-9][0-9]*)\.[0-9]+$/),
-  event: z.enum(['pre_compact', 'session_end', 'subagent_stop']),
-  session_id: z.string(),
-  project_id: z.string(),
-  agent_type: z.string().optional(),
-  cwd: z.string().optional(),
-  captured_at: z.string(), // ISO-8601
-  turns: z.array(TranscriptTurnSchema),
-  /** @deprecated use client_scrub_version + client_scrub_hits_by_label (v0.7.0 removal) */
-  client_scrub_applied: z.boolean(),
-  /** @deprecated use client_scrub_hits_by_label sum (v0.7.0 removal) */
-  client_scrub_hits: z.number().int().nonnegative(),
-  client_version: z.string(),
-  /** Scrubber version constant — consumers can assert minimum version. */
-  client_scrub_version: z.string(),
-  /** Per-label hit counts from scrubWithLabels() across all turns. */
-  client_scrub_hits_by_label: z.record(z.string(), z.number().int().nonnegative()).optional(),
-}).strict();
-
-export type TranscriptIngestPayload = z.infer<typeof TranscriptIngestPayloadSchema>;
+/** One transcript turn, projected out of the canonical envelope's `turns`
+ * tuple so callers that assemble turns before building the envelope
+ * (cli/ingest-transcript.ts) keep a standalone type. */
+export type TranscriptTurn = NonNullable<CaptureEnvelopeV1['turns']>[number];
 
 // ---------------------------------------------------------------------------
 // Health

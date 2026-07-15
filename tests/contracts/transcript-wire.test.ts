@@ -1,10 +1,15 @@
 /**
- * Contract tests for TranscriptTurnSchema + TranscriptIngestPayloadSchema.
+ * Contract tests for TranscriptIngestPayloadSchema.
  * FEAT 4a §5.1 — transcript wire contract round-trip + reject malformed.
+ *
+ * TranscriptIngestPayloadSchema is sourced from @astragenie/astramem-contracts
+ * (CaptureEnvelopeV1Schema) as of the contracts-import wave — see
+ * src/contracts/wire.ts for the full rationale. Two assertions below
+ * (turns required / empty turns allowed) were updated to match the canonical
+ * contract: turns is now optional, and when present requires >=1 item.
  */
 import { describe, it, expect } from 'vitest';
 import {
-  TranscriptTurnSchema,
   TranscriptIngestPayloadSchema,
   WIRE_VERSION,
 } from '../../src/contracts/wire.ts';
@@ -29,55 +34,10 @@ const VALID_ENVELOPE = {
   client_scrub_version: '2',
 };
 
-// ---------------------------------------------------------------------------
-// TranscriptTurnSchema
-// ---------------------------------------------------------------------------
-
-describe('TranscriptTurnSchema', () => {
-  it('parses a valid user turn without ts', () => {
-    const r = TranscriptTurnSchema.safeParse({ role: 'user', text: 'hello' });
-    expect(r.success).toBe(true);
-    if (r.success) {
-      expect(r.data.role).toBe('user');
-      expect(r.data.ts).toBeUndefined();
-    }
-  });
-
-  it('parses a valid assistant turn with ts', () => {
-    const r = TranscriptTurnSchema.safeParse({ role: 'assistant', text: 'reply', ts: '2026-01-01T00:00:00Z' });
-    expect(r.success).toBe(true);
-    if (r.success) {
-      expect(r.data.role).toBe('assistant');
-      expect(r.data.ts).toBe('2026-01-01T00:00:00Z');
-    }
-  });
-
-  it('rejects missing role', () => {
-    const r = TranscriptTurnSchema.safeParse({ text: 'no role' });
-    expect(r.success).toBe(false);
-  });
-
-  it('rejects missing text', () => {
-    const r = TranscriptTurnSchema.safeParse({ role: 'user' });
-    expect(r.success).toBe(false);
-  });
-
-  it('rejects invalid role enum (system)', () => {
-    const r = TranscriptTurnSchema.safeParse({ role: 'system', text: 'system message' });
-    expect(r.success).toBe(false);
-  });
-
-  it('rejects invalid role enum (tool)', () => {
-    const r = TranscriptTurnSchema.safeParse({ role: 'tool', text: 'tool message' });
-    expect(r.success).toBe(false);
-  });
-
-  it('ts field is optional — absent is OK', () => {
-    const r = TranscriptTurnSchema.safeParse({ role: 'assistant', text: 'no ts' });
-    expect(r.success).toBe(true);
-    if (r.success) expect(r.data.ts).toBeUndefined();
-  });
-});
+// Turn-shape coverage (missing role/text, bad role enum, optional ts) lives in
+// the "malformed turn" cases below, exercised at the envelope level — there is
+// no standalone turn schema to test in isolation now that TranscriptTurn is a
+// type projection off the canonical envelope, not its own zod schema.
 
 // ---------------------------------------------------------------------------
 // TranscriptIngestPayloadSchema
@@ -133,16 +93,21 @@ describe('TranscriptIngestPayloadSchema', () => {
     expect(r.success).toBe(false);
   });
 
-  it('rejects missing turns', () => {
+  // turns is OPTIONAL on the canonical envelope (supports the turns-less
+  // 'events' kind) — omitting the key is how a turns-less transcript session
+  // is represented (see cli/ingest-transcript.ts). Was required pre-#53.
+  it('allows missing turns', () => {
     const { turns: _t, ...rest } = VALID_ENVELOPE;
     const r = TranscriptIngestPayloadSchema.safeParse(rest);
-    expect(r.success).toBe(false);
+    expect(r.success).toBe(true);
   });
 
-  it('allows empty turns array', () => {
+  // Canonical requires >=1 item when turns IS present — [] is not a valid
+  // way to say "no turns" (that's what omitting the key is for). Was
+  // explicitly allowed pre-#53; reversed here to match the shared contract.
+  it('rejects empty turns array', () => {
     const r = TranscriptIngestPayloadSchema.safeParse({ ...VALID_ENVELOPE, turns: [] });
-    expect(r.success).toBe(true);
-    if (r.success) expect(r.data.turns).toHaveLength(0);
+    expect(r.success).toBe(false);
   });
 
   it('rejects malformed turn (missing role)', () => {
