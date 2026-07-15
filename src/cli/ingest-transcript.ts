@@ -352,14 +352,17 @@ export async function runIngestTranscript(
   // Read client version from plugin.json
   const clientVersion = readClientVersion();
 
-  // Build envelope
+  // Build envelope. `turns` is omitted entirely (not sent as []) when the
+  // transcript had no user/assistant lines — the canonical astramem-capture@1
+  // envelope (@astragenie/astramem-contracts) requires at least 1 item when
+  // the key is present; an omitted key is how the contract spells "no turns".
   const envelope: TranscriptIngestPayload = {
     wire_version: WIRE_VERSION,
     event: args.event as 'pre_compact' | 'session_end' | 'subagent_stop',
     session_id: args.sessionId,
     project_id: args.projectId,
     captured_at: new Date().toISOString(),
-    turns: scrubbedTurns,
+    ...(scrubbedTurns.length > 0 ? { turns: scrubbedTurns } : {}),
     client_scrub_applied: true,
     client_scrub_hits: totalScrubHits,
     client_scrub_version: SCRUB_VERSION,
@@ -369,7 +372,13 @@ export async function runIngestTranscript(
     ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
   };
 
-  // Validate envelope shape (defensive — should always pass given we constructed it)
+  // Validate envelope shape (defensive — should always pass given we constructed it).
+  // Send `envelope` itself, not `validation.data` — the canonical schema defaults
+  // `kind` to 'transcript' on parse, which would otherwise inject a field into the
+  // outgoing wire body that this envelope never set (server already defaults an
+  // omitted `kind` the same way per ADR-008, so the field is redundant, not wrong,
+  // but injecting it silently would still be a wire-shape change this swap isn't
+  // meant to make).
   const validation = TranscriptIngestPayloadSchema.safeParse(envelope);
   if (!validation.success) {
     const issues = validation.error.issues.map((i) => i.message).join(', ');
@@ -400,7 +409,7 @@ export async function runIngestTranscript(
 
   // Fire-and-forget: race the call against 2s timeout
   try {
-    const call = provider.ingestTranscript(validation.data);
+    const call = provider.ingestTranscript(envelope);
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, 2000));
     await Promise.race([call, timeout]);
   } catch (e) {
@@ -409,7 +418,7 @@ export async function runIngestTranscript(
     // Bug B fix (issue #13): on transient failure, persist to pending/ for retry.
     // On deterministic or unknown failure, log only — no retry (e.g. bad payload).
     if (err instanceof TransientError || isTransientCause(err)) {
-      enqueue(validation.data);
+      enqueue(envelope);
     }
     // Intentionally swallow — fire-and-forget
   }

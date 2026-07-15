@@ -46,6 +46,7 @@ import type {
   RecallResponse,
   HealthResponse,
   TranscriptIngestPayload,
+  TranscriptTurn,
 } from '../contracts/wire.ts';
 import { RecallResponseSchema, HealthResponseSchema, WIRE_VERSION } from '../contracts/wire.ts';
 import { DeterministicError, TransientError } from '../lib/errors.ts';
@@ -233,7 +234,9 @@ export class SaasProvider implements MemoryProvider {
     // callers (MCP, SDK) that skipped the CLI layer get scrub here.
     let totalHits = payload.client_scrub_hits;
     const mergedHitsByLabel: Record<string, number> = { ...(payload.client_scrub_hits_by_label ?? {}) };
-    const scrubbedTurns = payload.turns.map((turn) => {
+    // `turns` is optional on the canonical envelope (min 1 when present) —
+    // guard the turns-less case rather than assume it's always an array.
+    const scrubbedTurns = (payload.turns ?? []).map((turn: TranscriptTurn) => {
       const { output, hitsByLabel } = scrubWithLabels(turn.text);
       for (const [label, count] of Object.entries(hitsByLabel)) {
         mergedHitsByLabel[label] = (mergedHitsByLabel[label] ?? 0) + count;
@@ -248,7 +251,10 @@ export class SaasProvider implements MemoryProvider {
     const body: TranscriptIngestPayload = {
       ...payload,
       wire_version: payload.wire_version ?? WIRE_VERSION,
-      turns: scrubbedTurns,
+      // Re-omit rather than send [] — the canonical schema forbids an empty
+      // turns array (min 1 when the key is present); an absent key is how a
+      // turns-less envelope stays valid.
+      ...(scrubbedTurns.length > 0 ? { turns: scrubbedTurns } : {}),
       client_scrub_applied: true,
       client_scrub_hits: totalHits,
       client_scrub_hits_by_label: mergedHitsByLabel,
