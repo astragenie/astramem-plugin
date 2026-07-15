@@ -64,6 +64,68 @@ If the provider is unreachable they suggest `astramem health` for diagnosis.
 
 ---
 
+## Universal memory: make any agent smarter
+
+You do **not** need crew, runner, or any orchestration plugin to give your agents
+memory. This plugin ships an **MCP server** — so any Claude Code agent gets memory
+as first-class *tools*, in any repo, with zero custom code.
+
+### 1. Install + point at a daemon
+
+Installing this plugin registers the `astramem` MCP server (`.mcp.json`). Set two
+env vars so it can reach your AstraMemory daemon (a local
+[`astramem-local`](https://github.com/astragenie/astramem-local) or the SaaS):
+
+```
+MEMORY_API_URL   # e.g. http://127.0.0.1:7777   (the /mcp path is appended)
+MEMORY_BEARER    # the daemon's bearer token
+```
+
+Verify: `astramem health` → `{ ok: true, ... }`.
+
+Your agents now have these MCP tools:
+
+| Tool | Use |
+| --- | --- |
+| `agent_profile` | An agent/role's ranked **track record** — `top_lessons`, `recent_decisions`, and `corrections` (things it got wrong before). |
+| `recall_memory` / `search_memory` | Task-scoped semantic recall. |
+| `submit_feedback` / `mark_memory_used` | Record that a loaded memory was actually used (lifts it up the ranking). |
+| `remember` | Store a new typed memory (lesson / decision / fact / note). |
+
+### 2. Make recall actually happen (the important part)
+
+MCP tools are **model-discretionary** — an agent *can* call `recall_memory`, but
+left alone most won't. Pick a nudge, weakest → strongest:
+
+- **The `using-memory` skill (recommended, ships with this plugin).** It
+  auto-triggers at the start of substantial work and runs the full loop: load
+  `agent_profile` + `recall_memory`, use them, `submit_feedback` on what helped.
+  No config beyond the MCP server.
+- **A CLAUDE.md line** (universal, zero infra): *"At the start of any substantial
+  task, call `agent_profile` for your role and `recall_memory` for the task
+  before acting; `submit_feedback` on any memory you used."*
+- **A `SubagentStart` hook** (only *guaranteed* path, ~15 lines): fetch
+  `GET {MEMORY_API_URL}/agents/:agent/profile` and return it as
+  `hookSpecificOutput.additionalContext` — deterministic, the agent can't skip
+  it. Use when you need a hard guarantee rather than a strong nudge.
+
+### 3. The loop that makes agents smarter
+
+```
+remember / ingest  →  daemon extracts + ranks  →  recall + agent_profile at task start
+        ↑                                                        │
+        └───────────────  submit_feedback on use  ←──────────────┘
+```
+
+Write memories (or let transcript ingest auto-extract them) → read them back at
+the start of each task → feed back what helped. The feedback is what turns a pile
+of memories into a *ranked* one, so agents load what's useful, not what's noisy.
+
+Everything is **fail-silent**: an unreachable daemon or empty result means
+"proceed without memory," never an error or a blocked task.
+
+---
+
 ## `astramem` CLI — sub-commands
 
 | Sub-command | Description |
