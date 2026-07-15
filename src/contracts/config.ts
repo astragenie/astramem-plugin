@@ -24,7 +24,7 @@ export const AstramemConfigSchema = z.object({
   /** Logging configuration. */
   logging: z.object({
     level: z.enum(['debug', 'info', 'warn', 'error', 'silent']).default('info'),
-  }).default({}),
+  }).prefault({}),
 });
 
 export type AstramemConfig = z.infer<typeof AstramemConfigSchema>;
