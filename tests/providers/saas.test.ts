@@ -345,6 +345,74 @@ describe('SaasProvider — Clerk auth file bearer', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// FEAT-543 — auth SCHEME is chosen from the token shape. The cloud's
+// AuthMiddleware routes `ApiKey sk-…` to the API-key hash lookup and `Bearer …`
+// to JWT validation; sending an sk- API key as Bearer fails JWT parse → 401.
+// The golden-fixture (canonical-envelope) test never inspects the header, so
+// these unit tests are the regression net that would have caught the bug.
+// ---------------------------------------------------------------------------
+
+describe('SaasProvider — auth scheme selection (FEAT-543)', () => {
+  let origFetch: typeof globalThis.fetch;
+  let capturedAuthHeader: string | undefined;
+  // Save/restore every credential source so a leaked env var (e.g. a real
+  // MEMORY_BEARER in the dev shell) can't shadow the value under test.
+  const saved: Record<string, string | undefined> = {};
+  const CRED_ENV = ['XDG_CONFIG_HOME', 'APPDATA', 'MEMORY_BEARER', 'ASTRAMEMORY_API_KEY'];
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    capturedAuthHeader = undefined;
+    for (const k of CRED_ENV) saved[k] = process.env[k];
+    // Point auth.json lookup at a dir that does not exist → readAuth returns null.
+    process.env['XDG_CONFIG_HOME'] = '/tmp/no-such-auth-dir-feat543-' + Date.now();
+    delete process.env['APPDATA'];
+    delete process.env['MEMORY_BEARER'];
+    delete process.env['ASTRAMEMORY_API_KEY'];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      capturedAuthHeader = (init?.headers as Record<string, string> | undefined)?.['Authorization'];
+      const pathname = new URL(typeof input === 'string' ? input : input.toString()).pathname;
+      if (pathname === '/memories/search') {
+        return new Response(
+          JSON.stringify({ schema: 'astramem-retrieval-result@1', hits: [], total: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+    for (const k of CRED_ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('an sk- API key is sent with the ApiKey scheme (not Bearer)', async () => {
+    process.env['ASTRAMEMORY_API_KEY'] = 'sk-test-abcdef0123456789';
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    await provider.recall(SAMPLE_RECALL);
+    expect(capturedAuthHeader).toBe('ApiKey sk-test-abcdef0123456789');
+  });
+
+  it('a non-sk token (JWT) is still sent with the Bearer scheme', async () => {
+    process.env['MEMORY_BEARER'] = 'eyJhbGciOiJSUzI1NiJ9.payload.sig';
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    await provider.recall(SAMPLE_RECALL);
+    expect(capturedAuthHeader).toBe('Bearer eyJhbGciOiJSUzI1NiJ9.payload.sig');
+  });
+
+  it('MEMORY_BEARER=sk-… also routes to ApiKey — scheme keys on shape, not var name', async () => {
+    process.env['MEMORY_BEARER'] = 'sk-live-zzz';
+    const provider = new SaasProvider(SAAS_MOCK_URL);
+    await provider.recall(SAMPLE_RECALL);
+    expect(capturedAuthHeader).toBe('ApiKey sk-live-zzz');
+  });
+});
+
 describe('SaasProvider — error classes', () => {
   let origFetch: typeof globalThis.fetch;
 

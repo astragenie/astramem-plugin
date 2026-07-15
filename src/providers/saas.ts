@@ -99,26 +99,53 @@ async function fetchWithTimeout(
 }
 
 /**
- * Read SaaS bearer.
+ * Read SaaS credential token.
  * Precedence: Clerk auth.json (OIDC) → MEMORY_BEARER env → ASTRAMEMORY_API_KEY env.
  * v0.7.0 will move OIDC refresh inside this function.
+ *
+ * FEAT-543: an EXPIRED auth.json token is skipped so it cannot shadow a working
+ * static API key. Before this guard, a stale Clerk session (common: laptop woke
+ * after the token's short TTL) always won precedence, got sent as `Bearer`, and
+ * 401'd — even when a valid `ASTRAMEMORY_API_KEY=sk-…` was set. The static env
+ * key is the intended fallback in exactly that case.
  */
 async function readSaasBearer(): Promise<string | undefined> {
   const auth = await readAuth();
-  if (auth?.access_token) return auth.access_token;
+  if (auth?.access_token && !isExpired(auth.expires_at)) return auth.access_token;
   // Static env fallback (see FEAT 4a §4.1.2 — OIDC refresh deferred to v0.7.0).
   return resolveEnv(ENV.bearerSaas).value;
 }
 
+/**
+ * True when a Clerk `expires_at` (epoch SECONDS) is at/past now, with a 30s skew
+ * guard. Absent expiry → treated as valid (older auth.json writes had no field;
+ * env API keys never carry one).
+ */
+function isExpired(expiresAt: number | undefined): boolean {
+  if (expiresAt === undefined) return false;
+  return Date.now() / 1000 >= expiresAt - 30;
+}
+
+/**
+ * FEAT-543: pick the HTTP auth SCHEME from the token shape. The cloud's
+ * AuthMiddleware routes `ApiKey sk-…` to the API-key hash lookup and `Bearer …`
+ * to JWT validation — sending an `sk-` API key as `Bearer` fails JWT parsing and
+ * 401s. AstraMemory API keys are `sk-…`; Clerk/OIDC JWTs are `ey…` (base64url
+ * `{"alg"…}` header). Anything not `sk-` is treated as a bearer JWT.
+ */
+function authScheme(token: string): 'ApiKey' | 'Bearer' {
+  return token.startsWith('sk-') ? 'ApiKey' : 'Bearer';
+}
+
 async function buildHeaders(bearerOverride?: string): Promise<Record<string, string>> {
-  const bearer = bearerOverride ?? (await readSaasBearer());
+  const token = bearerOverride ?? (await readSaasBearer());
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json',
   };
-  if (bearer) {
-    // Bearer value never logged — scrub applied upstream by Track B.
-    headers['Authorization'] = `Bearer ${bearer}`;
+  if (token) {
+    // Token value never logged — scrub applied upstream by Track B.
+    headers['Authorization'] = `${authScheme(token)} ${token}`;
   }
   return headers;
 }
