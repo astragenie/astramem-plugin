@@ -1,8 +1,10 @@
 // Provider selector types for the astramem CLI provider-selector.
 import type { MemoryProvider } from './provider.ts';
 
-/** Which backend to use. */
-export type Provider = 'local' | 'saas';
+/** Which backend to use. 'demo' is the zero-daemon, zero-network trial
+ *  provider activated by `astramem connect --demo` — never selected by
+ *  auto-probe, only via explicit flag/env/config. */
+export type Provider = 'local' | 'saas' | 'demo';
 
 /**
  * How the provider was resolved.

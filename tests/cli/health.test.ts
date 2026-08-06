@@ -84,6 +84,23 @@ describe('runHealth', () => {
     expect(out).toHaveProperty('latencyMs');
   });
 
+  it('marks demo:true when the resolved provider is demo, for a clear ephemeral-data indicator', async () => {
+    const provider = createMockProvider({
+      healthResult: { ok: true, version: 'demo-0.1.0', url: 'demo://in-memory', latencyMs: 0 },
+    });
+    const code = await runHealth([], { _provider: provider, _providerName: 'demo' });
+    expect(code).toBe(0);
+    const out = cap.json();
+    expect(out.demo).toBe(true);
+  });
+
+  it('does not set demo:true for local/saas providers', async () => {
+    const provider = createMockProvider();
+    await runHealth([], { _provider: provider, _providerName: 'local' });
+    const out = cap.json();
+    expect(out.demo).toBeUndefined();
+  });
+
   it('prints help text for --help flag', async () => {
     const provider = createMockProvider();
     const code = await runHealth(['--help'], { _provider: provider });

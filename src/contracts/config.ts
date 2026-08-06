@@ -10,10 +10,12 @@ const ProviderEndpointSchema = z.object({
 
 export const AstramemConfigSchema = z.object({
   /**
-   * Which provider to use: 'local' | 'saas' | 'auto'.
+   * Which provider to use: 'local' | 'saas' | 'demo' | 'auto'.
    * 'auto' probes local /health first; falls back to saas.
+   * 'demo' is the zero-daemon, zero-network trial provider activated by
+   * `astramem connect --demo` — never selected by 'auto'.
    */
-  provider: z.enum(['local', 'saas', 'auto']).default('auto'),
+  provider: z.enum(['local', 'saas', 'demo', 'auto']).default('auto'),
 
   /** Local provider config (default: http://127.0.0.1:7777). */
   local: ProviderEndpointSchema.default({}),

@@ -23,7 +23,17 @@ bun add -g @astragenie/astramem-plugin
 astramem connect          # local daemon (astramem-local must be running)
 # OR — if you have a dashboard claim code:
 astramem connect ABCD-1234 --env prod
+
+# No daemon and no claim code? Try the zero-daemon demo instead:
+astramem connect --demo
 ```
+
+`connect --demo` seeds a handful of example memories in-process — no `astramem-local`
+install, no network call, no SaaS account required — so `astramem recall`, `astramem
+remember`, `astramem health`, and the auto-capture hooks all work immediately. Data is
+ephemeral: it lives in a demo-only store separate from real config, and `astramem
+connect` (without `--demo`) clears it when you're ready to pair with a real daemon or
+SaaS account.
 
 ---
 
@@ -82,6 +92,13 @@ MEMORY_BEARER    # the daemon's bearer token
 ```
 
 Verify: `astramem health` → `{ ok: true, ... }`.
+
+> **`connect --demo` note:** the MCP server is registered via `.mcp.json` pointing at
+> `${MEMORY_API_URL}/mcp` — a real HTTP endpoint owned by whatever daemon `MEMORY_API_URL`
+> resolves to. Demo mode is a CLI-side, zero-network provider with no listener behind it, so
+> it covers `astramem recall` / `remember` / `health` and the auto-capture hooks (all of which
+> shell out to the CLI) but not the MCP tools below — those still need a real `astramem-local`
+> daemon or SaaS account and `MEMORY_API_URL`/`MEMORY_BEARER` set.
 
 Your agents now have these MCP tools:
 

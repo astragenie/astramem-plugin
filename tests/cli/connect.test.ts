@@ -160,3 +160,117 @@ describe('runConnect', () => {
     }
   });
 });
+
+describe('runConnect --demo', () => {
+  let cap: ReturnType<typeof captureOutput>;
+  let tmpDir: string;
+  let origAppdata: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'astramem-connect-demo-test-'));
+    origAppdata = process.env['APPDATA'];
+    process.env['APPDATA'] = tmpDir;
+    cap = captureOutput();
+  });
+
+  afterEach(async () => {
+    cap.restore();
+    if (origAppdata === undefined) delete process.env['APPDATA'];
+    else process.env['APPDATA'] = origAppdata;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('activates demo mode: exits 0, prints a DEMO MODE banner, sets config.provider to demo', async () => {
+    const code = await runConnect(['--demo']);
+    expect(code).toBe(0);
+    const text = cap.text();
+    expect(text).toMatch(/DEMO MODE/);
+    expect(text).toMatch(/ephemeral/i);
+
+    const { loadConfig } = await import('../../src/lib/config.ts');
+    expect(loadConfig().provider).toBe('demo');
+  });
+
+  it('seeds the demo store so a subsequent health probe reports ok', async () => {
+    await runConnect(['--demo']);
+    const { DemoProvider, isDemoStoreActive } = await import('../../src/providers/demo.ts');
+    expect(isDemoStoreActive()).toBe(true);
+    const health = await new DemoProvider().health();
+    expect(health.ok).toBe(true);
+  });
+
+  it('caches a demo result in local.json, clearly marked demo:true', async () => {
+    await runConnect(['--demo']);
+    const { readFileSync } = await import('node:fs');
+    const { unifiedConfigDir } = await import('../../src/lib/datadir.ts');
+    const cached = JSON.parse(
+      readFileSync(join(unifiedConfigDir(), 'local.json'), 'utf-8'),
+    ) as Record<string, unknown>;
+    expect(cached['ok']).toBe(true);
+    expect(cached['demo']).toBe(true);
+  });
+
+  it('never makes a network call — an unreachable local.url does not affect --demo', async () => {
+    const { setValue } = await import('../../src/lib/config.ts');
+    setValue('local.url', 'http://127.0.0.1:19999'); // nothing listening
+    const code = await runConnect(['--demo']);
+    expect(code).toBe(0);
+    expect(cap.text()).toMatch(/DEMO MODE/);
+  });
+
+  it('running --demo twice reseeds cleanly (idempotent, drops prior demo-session data)', async () => {
+    await runConnect(['--demo']);
+    const { DemoProvider } = await import('../../src/providers/demo.ts');
+    await new DemoProvider().remember({
+      id: 'extra-1',
+      type: 'note',
+      text: 'a memory added during the first demo session',
+    });
+
+    const code = await runConnect(['--demo']);
+    expect(code).toBe(0);
+
+    const res = await new DemoProvider().recall({ query: 'extra-1 first demo session', k: 10 });
+    expect(res.hits.some((h) => h.id === 'extra-1')).toBe(false); // reseeded away
+  });
+
+  it('plain connect (no --demo) exits demo mode: resets provider off demo and clears the demo store', async () => {
+    await runConnect(['--demo']);
+    const { loadConfig } = await import('../../src/lib/config.ts');
+    expect(loadConfig().provider).toBe('demo');
+
+    const srv = await makeServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ version: '0.2.0', ok: true }));
+    });
+    const { setValue } = await import('../../src/lib/config.ts');
+    setValue('local.url', srv.url);
+
+    try {
+      const code = await runConnect([]);
+      expect(code).toBe(0);
+      expect(loadConfig().provider).not.toBe('demo');
+      const { isDemoStoreActive } = await import('../../src/providers/demo.ts');
+      expect(isDemoStoreActive()).toBe(false);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('plain connect when never in demo mode behaves exactly as before (no regression)', async () => {
+    const srv = await makeServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ version: '0.2.0', ok: true }));
+    });
+    const { setValue } = await import('../../src/lib/config.ts');
+    setValue('local.url', srv.url);
+
+    try {
+      const code = await runConnect([]);
+      expect(code).toBe(0);
+      expect(cap.text()).toMatch(/CONNECTED/);
+    } finally {
+      await srv.close();
+    }
+  });
+});
