@@ -9,12 +9,12 @@ const VERSION = '0.5.2';
 
 const SUBCOMMANDS = ['ingest-transcript', 'recall', 'remember', 'health', 'config', 'doctor', 'connect'] as const;
 type Subcommand = typeof SUBCOMMANDS[number];
-type Provider = 'local' | 'saas' | 'auto';
+type Provider = 'local' | 'saas' | 'demo' | 'auto';
 
 const HELP = `
 astramem — AstraMemory CLI v${VERSION}
 
-Usage: astramem [--provider local|saas|auto] <subcommand> [options]
+Usage: astramem [--provider local|saas|demo|auto] <subcommand> [options]
 
 Subcommands:
   ingest-transcript   Ingest a JSONL transcript file (fire-and-forget; hook shim target)
@@ -24,11 +24,12 @@ Subcommands:
   config              Get or set configuration (config get [key] | config set <key> <val>)
   doctor              Diagnose selector resolution, logs, env vars, and config
   connect             Connect to the local AstraMemory daemon
+                      (connect --demo: zero-daemon, zero-network demo mode)
 
 Global flags:
-  --provider local|saas|auto  Override provider selection
-  --help, -h                  Show this help message
-  --version, -v               Show version
+  --provider local|saas|demo|auto  Override provider selection
+  --help, -h                       Show this help message
+  --version, -v                    Show version
 
 Run 'astramem <subcommand> --help' for subcommand-specific usage.
 `.trimStart();
@@ -40,10 +41,10 @@ function parseGlobals(argv: string[]): { provider: Provider | null; remaining: s
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--provider' && i + 1 < argv.length) {
       const val = argv[++i]!;
-      if (val === 'local' || val === 'saas' || val === 'auto') {
+      if (val === 'local' || val === 'saas' || val === 'demo' || val === 'auto') {
         provider = val;
       } else {
-        process.stderr.write(`astramem: unknown provider '${val}'. Use local|saas|auto.\n`);
+        process.stderr.write(`astramem: unknown provider '${val}'. Use local|saas|demo|auto.\n`);
         process.exit(1);
       }
     } else {
@@ -88,7 +89,7 @@ async function main(): Promise<void> {
   }
 
   // Resolve --provider auto → undefined (selector handles auto-probe internally)
-  const providerFlag = provider === 'auto' ? undefined : (provider ?? undefined) as 'local' | 'saas' | undefined;
+  const providerFlag = provider === 'auto' ? undefined : (provider ?? undefined) as 'local' | 'saas' | 'demo' | undefined;
 
   let exitCode = 0;
 
@@ -125,7 +126,7 @@ async function main(): Promise<void> {
     }
     case 'connect': {
       const { runConnect } = await import('../src/cli/connect.ts');
-      exitCode = await runConnect();
+      exitCode = await runConnect(subArgs);
       break;
     }
   }

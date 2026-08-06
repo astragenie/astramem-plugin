@@ -27,13 +27,20 @@ const makeMockProvider = (): MemoryProvider => ({
 });
 
 // Mock the Track A provider files so they don't need to exist yet.
+// Each mock class carries a `__kind` marker so tests can assert *which*
+// provider class the selector actually instantiated — providerName alone
+// is caller-supplied and doesn't prove the right class was loaded.
 vi.mock('../../src/providers/local.ts', () => {
   const inst = makeMockProvider();
-  return { LocalProvider: class { ingest = inst.ingest; ingestTranscript = inst.ingestTranscript; recall = inst.recall; remember = inst.remember; health = inst.health; } };
+  return { LocalProvider: class { __kind = 'local'; ingest = inst.ingest; ingestTranscript = inst.ingestTranscript; recall = inst.recall; remember = inst.remember; health = inst.health; } };
 });
 vi.mock('../../src/providers/saas.ts', () => {
   const inst = makeMockProvider();
-  return { SaasProvider: class { ingest = inst.ingest; ingestTranscript = inst.ingestTranscript; recall = inst.recall; remember = inst.remember; health = inst.health; } };
+  return { SaasProvider: class { __kind = 'saas'; ingest = inst.ingest; ingestTranscript = inst.ingestTranscript; recall = inst.recall; remember = inst.remember; health = inst.health; } };
+});
+vi.mock('../../src/providers/demo.ts', () => {
+  const inst = makeMockProvider();
+  return { DemoProvider: class { __kind = 'demo'; ingest = inst.ingest; ingestTranscript = inst.ingestTranscript; recall = inst.recall; remember = inst.remember; health = inst.health; } };
 });
 
 beforeEach(() => {
@@ -54,7 +61,7 @@ async function getSelector() {
   return import('../../src/lib/selector.ts');
 }
 
-function writeConfig(provider: 'local' | 'saas' | 'auto') {
+function writeConfig(provider: 'local' | 'saas' | 'demo' | 'auto') {
   mkdirSync(tempDir, { recursive: true });
   writeFileSync(
     join(tempDir, 'config.json'),
@@ -179,6 +186,44 @@ describe('resolveProvider — precedence matrix', () => {
     const result = await resolveProvider({});
     expect(result.source).toBe('fallback');
     expect(result.providerName).toBe('saas');
+  });
+
+  it('flag resolves an actual DemoProvider instance (not a silent SaasProvider fallback)', async () => {
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const result = await resolveProvider({ flag: 'demo' });
+    expect(result.source).toBe('flag');
+    expect(result.providerName).toBe('demo');
+    expect((result.provider as unknown as { __kind: string }).__kind).toBe('demo');
+  });
+
+  it('flag "demo" never probes wire-compat, even when a SaaS URL happens to be configured', async () => {
+    vi.stubEnv('MEMORY_API_URL_SAAS', 'https://saas.example.com');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache, _setWireCompatFn, _resetWireCompatFn } =
+      await getSelector();
+    _resetHealthCache();
+    const wireCompatFn = vi.fn().mockResolvedValue({ status: 'compatible', providerName: 'demo', baseUrl: 'x' });
+    _setWireCompatFn(wireCompatFn);
+    _setHealthProbeFn(async () => ({ ok: true, latency_ms: 1 }));
+
+    const result = await resolveProvider({ flag: 'demo' });
+    expect(result.providerName).toBe('demo');
+    expect(wireCompatFn).not.toHaveBeenCalled();
+    _resetWireCompatFn();
+  });
+
+  it('config provider "demo" resolves the demo provider', async () => {
+    writeConfig('demo');
+    const { resolveProvider, _setHealthProbeFn, _resetHealthCache } = await getSelector();
+    _resetHealthCache();
+    _setHealthProbeFn(async () => ({ ok: false, latency_ms: 5000 }));
+
+    const result = await resolveProvider({});
+    expect(result.source).toBe('config');
+    expect(result.providerName).toBe('demo');
+    expect((result.provider as unknown as { __kind: string }).__kind).toBe('demo');
   });
 
   it('ignores invalid provider values in env', async () => {

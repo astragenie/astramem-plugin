@@ -19,6 +19,9 @@ export interface HealthOutput {
   version: string | undefined;
   url: string | undefined;
   latencyMs: number | undefined;
+  /** Present and true only when the resolved provider is 'demo' — a clear
+   *  ephemeral-data indicator alongside `astramem connect --demo`'s banner. */
+  demo?: boolean;
   error?: string;
 }
 
@@ -32,7 +35,7 @@ export interface HealthOutput {
 export async function runHealth(args: string[], opts: HealthOpts = {}): Promise<number> {
   // Parse --help
   if (args.includes('--help') || args.includes('-h')) {
-    process.stdout.write('Usage: astramem health [--provider local|saas|auto]\n');
+    process.stdout.write('Usage: astramem health [--provider local|saas|demo|auto]\n');
     return 0;
   }
 
@@ -74,6 +77,7 @@ export async function runHealth(args: string[], opts: HealthOpts = {}): Promise<
       version: healthResp.version,
       url: healthResp.url,
       latencyMs: healthResp.latencyMs,
+      ...(providerName === 'demo' ? { demo: true } : {}),
     };
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
     return healthResp.ok ? 0 : 3;

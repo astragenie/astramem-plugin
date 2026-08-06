@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+Kill the single demo fragility — a live demo no longer needs a pre-warmed daemon or a SaaS claim code (Wave 2 Track A, demo-readiness programme).
+
+### Added
+- **`astramem connect --demo`** — zero-daemon, zero-network trial mode. Activates a new in-process `DemoProvider` (`src/providers/demo.ts`) seeded with 5 canned example memories (decision/fact/lesson/preference/todo), backed by a demo-only JSON store under the config dir so `astramem recall`/`remember`/`health` and the auto-capture hooks all work immediately — no `astramem-local` install, no claim code, no fetch() call ever made. Scoring is a deterministic keyword-overlap heuristic (no model, no network, no randomness).
+- **`astramem health`** now reports `demo: true` when the resolved provider is `demo`, alongside the `DEMO MODE — data is ephemeral` banner printed by `connect --demo` — a clear, hard-to-miss indicator that the session is ephemeral.
+- Plain `astramem connect` (no `--demo`) now exits demo mode first if it was active: resets `config.provider` off `demo` and wipes the demo store, so re-pairing with a real daemon or SaaS account never inherits stale demo state.
+- `Provider` (`local | saas | demo`) and the config `provider` enum both gained `'demo'` — selectable via `--provider demo`, `ASTRAMEM_PROVIDER=demo`, or `config.provider`, on top of the primary `connect --demo` entry point. `demo` is never chosen by `auto` — only explicit selection.
+- README quick-start gained a `connect --demo` line; the MCP section notes that demo mode covers the CLI/hooks surface but not the MCP tools, which still require a real daemon behind `MEMORY_API_URL` (the MCP server is a separate HTTP endpoint declared in `.mcp.json`, outside this provider's zero-network scope).
+
 ## [0.7.0] — 2026-07-15
 
 Universal memory: make any Claude Code agent smarter via the MCP path — no crew/runner needed.

@@ -133,9 +133,13 @@ export function _resetWireCompatFn(): void {
  * resolveLocalUrl(); saas: env-only, matching SaasProvider's own resolution —
  * see src/providers/saas.ts resolveBaseUrl()). Returns undefined when the
  * SaaS URL isn't configured; the provider construction path already surfaces
- * that failure on its own, so the probe just skips rather than double-erroring. */
+ * that failure on its own, so the probe just skips rather than double-erroring.
+ * 'demo' has no real backend at all — it never speaks wire-compat and must
+ * never fall through into the saas branch just because a saas.url happens
+ * to be configured alongside it. */
 function resolveBaseUrlForProbe(name: Provider): string | undefined {
   if (name === 'local') return resolveLocalUrl();
+  if (name === 'demo') return undefined;
   return resolveEnv(ENV.apiUrlSaas).value?.replace(/\/$/, '');
 }
 
@@ -303,6 +307,12 @@ async function loadProvider(name: Provider): Promise<MemoryProvider> {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     return new (mod.LocalProvider as new () => MemoryProvider)();
   }
+  if (name === 'demo') {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const mod = await import('../providers/demo.ts');
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    return new (mod.DemoProvider as new () => MemoryProvider)();
+  }
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const mod = await import('../providers/saas.ts');
   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -334,5 +344,5 @@ async function defaultHealthProbe(url: string): Promise<{ ok: boolean; latency_m
 // ---------------------------------------------------------------------------
 
 function isValidProvider(val: string): val is Provider {
-  return val === 'local' || val === 'saas';
+  return val === 'local' || val === 'saas' || val === 'demo';
 }
