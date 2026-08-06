@@ -1,0 +1,30 @@
+title = "astramem-plugin gitleaks config"
+
+# Run the full built-in gitleaks ruleset unchanged. Prefer NOT allowlisting by
+# path below — a path allowlist blinds the scanner to any future real secret
+# pasted into that same file. The recommended pattern instead: pin each
+# reviewed false positive by exact commit:path:rule:line fingerprint in a
+# .gitleaksignore file at the repo root (both `gitleaks protect --staged` and
+# `gitleaks detect` honor it). See README.md next to this file for the full
+# walkthrough and fingerprint format.
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Example 1 — path allowlist (use sparingly; see warning above). Useful for
+# directories that are never real source, e.g. scratch/tmp output from tests
+# or scanner tooling.
+# ---------------------------------------------------------------------------
+# [allowlist]
+#   paths = [
+#     '''^\.tmp/''',
+#   ]
+
+# ---------------------------------------------------------------------------
+# Example 2 — regex allowlist for a specific known-safe literal, e.g. a
+# vendor's own published example credential that legitimately appears in docs.
+# ---------------------------------------------------------------------------
+# [allowlist]
+#   regexes = [
+#     '''AKIAIOSFODNN7EXAMPLE''',
+#   ]

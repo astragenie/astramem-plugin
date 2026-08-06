@@ -10,6 +10,36 @@ shape to both SaaS and local backends, closing out the wire-contract unification
 
 ---
 
+## The AstraMem family
+
+AstraMem is three wire-compatible pieces you mix and match: the **AstraMemory cloud API**
+(`astragenie/memory`) for hosted/shared memory, the **[astramem-local](https://github.com/astragenie/astramem-local)**
+daemon for offline/private memory, and **this plugin** — the CLI, MCP server, and Claude Code
+hooks that talk to either backend. Switching backends is a single `MEMORY_API_URL` swap; every
+agent using this plugin gets the same recall → use → feedback → remember loop no matter which
+one answers.
+
+```
+┌────────────────────┐        ┌────────────────────────┐
+│   astramem-local     │        │    AstraMemory SaaS      │
+│  (offline daemon)     │        │  (astragenie/memory)      │
+└──────────┬──────────┘        └───────────┬────────────┘
+           │                                │
+           └───────────────┬────────────────┘
+                            │  one env var: MEMORY_API_URL
+                            ▼
+                ┌─────────────────────────┐
+                │    astramem-plugin          │   ← this repo
+                │  CLI · MCP server · hooks     │
+                └────────────┬────────────┘
+                              │
+        remember ◀── feedback ◀── use ◀── recall
+            │                                     ▲
+            └─────────────────────────────────────┘
+```
+
+---
+
 ## Quick start
 
 ```bash
@@ -24,6 +54,10 @@ astramem connect          # local daemon (astramem-local must be running)
 # OR — if you have a dashboard claim code:
 astramem connect ABCD-1234 --env prod
 ```
+
+> **Troubleshooting:** if `connect` or a slash command isn't working, run `astramem doctor` —
+> it prints env vars, provider selector resolution, config validation, and the last 5 log lines
+> in one shot. See [`astramem` CLI — sub-commands](#astramem-cli--sub-commands) below.
 
 ---
 
