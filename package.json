@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@astragenie/astramem-contracts": "2.4.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
