@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Hooks derive `PROJECT_ID` from the main repo, not the agent-worktree dir name** (#68) — `session-end-summary.sh`, `subagent-stop-capture.sh`, `pre-compact-capture.sh`, and `session-start-recall.sh` all derived `PROJECT_ID` as a raw `basename(cwd)`. Claude Code runs isolated agents inside a worktree (`<repo>/.claude/worktrees/agent-<id>/`, or the sibling layout `<repo>-worktrees/<name>/`), so for those sessions `basename(cwd)` resolved to the worktree directory name (e.g. `agent-a0112287d8dd8d401`) instead of the repo — stamping bogus project identities on captured memories (measured on astramem-local: 17,877 memories, 270 distinct bogus projects). All four hooks now share one helper, `derive_project_id()` (`hooks/scripts/lib/project-id.sh`), that prefers `git -C "$cwd" rev-parse --git-common-dir` (resolves to the MAIN repo for both the main checkout and any worktree) and falls back to stripping a trailing `/.claude/worktrees/<x>` or `/<name>-worktrees/<x>` segment when git is unavailable or the worktree path has already been deleted. `session-start-recall.sh` picks up the same fix so recall scopes to the same project the capture hooks stamp.
+
 ## [0.7.0] — 2026-07-15
 
 Universal memory: make any Claude Code agent smarter via the MCP path — no crew/runner needed.
