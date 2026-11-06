@@ -9,8 +9,17 @@
 #     to the CLI (the CLI does its own path.resolve() but belt-and-suspenders here)
 #   - ASTRAMEM_HOOK_DEBUG=1: print resolved path + parent-dir listing to stderr
 #     (redirected to /dev/null in normal operation; unset to expose)
+#
+# issue #68: PROJECT_ID is derived via the shared derive_project_id() helper
+# (hooks/scripts/lib/project-id.sh) instead of a raw basename(cwd) — this is
+# the hook most exposed to the worktree-leak bug, since subagents are the
+# ones Claude Code actually runs inside .claude/worktrees/agent-<id>/.
 set +e
 set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/project-id.sh
+. "$SCRIPT_DIR/lib/project-id.sh"
 
 PAYLOAD="$(cat)"
 if [ -z "$PAYLOAD" ]; then
@@ -29,17 +38,12 @@ if [ -n "$TRANSCRIPT_PATH" ]; then
   TRANSCRIPT_PATH="${TRANSCRIPT_PATH//\\//}"
 fi
 
-# project_id = basename of cwd (matches existing project_id convention)
-if [ -n "$CWD" ]; then
-  PROJECT_ID="$(basename "$CWD")"
-else
-  PROJECT_ID="$(basename "$PWD")"
-fi
+PROJECT_ID="$(derive_project_id "$CWD")"
 
 # Debug logging: export ASTRAMEM_HOOK_DEBUG=1 to surface path resolution info.
 if [ "${ASTRAMEM_HOOK_DEBUG:-}" = "1" ]; then
-  printf '[astramem-hook-debug] subagent-stop-capture: session=%s transcript_path=%s cwd=%s\n' \
-    "$SESSION_ID" "$TRANSCRIPT_PATH" "$CWD" >&2
+  printf '[astramem-hook-debug] subagent-stop-capture: session=%s transcript_path=%s cwd=%s project=%s\n' \
+    "$SESSION_ID" "$TRANSCRIPT_PATH" "$CWD" "$PROJECT_ID" >&2
   if [ -n "$TRANSCRIPT_PATH" ]; then
     PARENT_DIR="$(dirname "$TRANSCRIPT_PATH")"
     if [ -d "$PARENT_DIR" ]; then
@@ -62,12 +66,19 @@ fi
 # (fire-and-forget contract). timeout exit 124 -> non-zero -> clean fallthrough.
 CAPTURE_TIMEOUT=""
 command -v timeout >/dev/null 2>&1 && CAPTURE_TIMEOUT="timeout 5"
+# astramem-local#375: attribute the captured transcript to the subagent that
+# produced it (payload.agent_type, e.g. "devcrew:reviewer"), not the parent
+# session's "claude-code". Without this every hook-captured atom landed on the
+# parent agent and per-role profiles / the cloud Agents page never formed.
+# Older astramem-local CLIs ignore the unknown flag (parseArg is positional-safe).
+AGENT_TYPE_ARGS=()
+[ -n "$AGENT_TYPE" ] && AGENT_TYPE_ARGS=(--agent-type "$AGENT_TYPE")
 if [ -n "$TRANSCRIPT_PATH" ] && command -v astramem-local >/dev/null 2>&1; then
   if [ "${ASTRAMEM_HOOK_DEBUG:-}" = "1" ]; then
-    if $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop >&2; then
+    if $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop "${AGENT_TYPE_ARGS[@]}" >&2; then
       exit 0
     fi
-  elif $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop >/dev/null 2>&1; then
+  elif $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop "${AGENT_TYPE_ARGS[@]}" >/dev/null 2>&1; then
     exit 0
   fi
 fi

@@ -8,8 +8,17 @@
 #   - Path normalization: convert backslashes to forward slashes before passing
 #     to the CLI (the CLI does its own path.resolve() but belt-and-suspenders here)
 #   - ASTRAMEM_HOOK_DEBUG=1: print resolved path + parent-dir listing to stderr
+#
+# issue #68: PROJECT_ID is derived via the shared derive_project_id() helper
+# (hooks/scripts/lib/project-id.sh) instead of a raw basename(cwd), so an
+# agent running inside a worktree stamps the MAIN repo's name, not the
+# worktree directory name.
 set +e
 set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/project-id.sh
+. "$SCRIPT_DIR/lib/project-id.sh"
 
 PAYLOAD="$(cat)"
 if [ -z "$PAYLOAD" ]; then
@@ -27,16 +36,12 @@ if [ -n "$TRANSCRIPT_PATH" ]; then
   TRANSCRIPT_PATH="${TRANSCRIPT_PATH//\\//}"
 fi
 
-if [ -n "$CWD" ]; then
-  PROJECT_ID="$(basename "$CWD")"
-else
-  PROJECT_ID="$(basename "$PWD")"
-fi
+PROJECT_ID="$(derive_project_id "$CWD")"
 
 # Debug logging: export ASTRAMEM_HOOK_DEBUG=1 to surface path resolution info.
 if [ "${ASTRAMEM_HOOK_DEBUG:-}" = "1" ]; then
-  printf '[astramem-hook-debug] pre-compact-capture: session=%s transcript_path=%s cwd=%s\n' \
-    "$SESSION_ID" "$TRANSCRIPT_PATH" "$CWD" >&2
+  printf '[astramem-hook-debug] pre-compact-capture: session=%s transcript_path=%s cwd=%s project=%s\n' \
+    "$SESSION_ID" "$TRANSCRIPT_PATH" "$CWD" "$PROJECT_ID" >&2
   if [ -n "$TRANSCRIPT_PATH" ]; then
     PARENT_DIR="$(dirname "$TRANSCRIPT_PATH")"
     if [ -d "$PARENT_DIR" ]; then

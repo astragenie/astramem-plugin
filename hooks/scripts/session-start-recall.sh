@@ -10,6 +10,11 @@
 #   - on success: prints ONE compact JSON object with
 #     hookSpecificOutput.additionalContext (SessionStart schema)
 #
+# issue #68: PROJECT_ID is derived via the shared derive_project_id() helper
+# (hooks/scripts/lib/project-id.sh) instead of a raw basename(cwd), so recall
+# scopes to the same project the capture hooks stamp, even when this session
+# itself is running inside a worktree.
+#
 # Env knobs:
 #   MEMORY_SESSIONSTART_RECALL_DISABLE=1  skip entirely
 #   MEMORY_SESSIONSTART_RECALL_K          top-k hits (default 8)
@@ -23,19 +28,17 @@ if [ "${MEMORY_SESSIONSTART_RECALL_DISABLE:-}" = "1" ]; then
   exit 0
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/project-id.sh
+. "$SCRIPT_DIR/lib/project-id.sh"
+
 PAYLOAD="$(cat)"
 CWD=""
 if [ -n "$PAYLOAD" ]; then
   CWD="$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty' 2>/dev/null)"
 fi
 
-# Normalize path separators (same belt-and-suspenders as session-end-summary.sh).
-if [ -n "$CWD" ]; then
-  CWD="${CWD//\\//}"
-  PROJECT_ID="$(basename "$CWD")"
-else
-  PROJECT_ID="$(basename "$PWD")"
-fi
+PROJECT_ID="$(derive_project_id "$CWD")"
 [ -z "$PROJECT_ID" ] && exit 0
 
 K="${MEMORY_SESSIONSTART_RECALL_K:-8}"
