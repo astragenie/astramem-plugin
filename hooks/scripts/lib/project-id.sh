@@ -28,6 +28,13 @@
 # — no git-awareness is applied to that path, to keep that branch
 # byte-for-byte identical to existing behaviour.
 #
+# Hardening (post-#68 review): every git invocation in step 1 pins
+# GIT_CEILING_DIRECTORIES to dirname(cwd) so git's upward .git search can
+# never escape past cwd's own parent. Without it, a non-git cwd nested
+# under an unrelated ambient repo (e.g. a dotfiles repo at $HOME, which is
+# where %TEMP% always lives on Windows) would be misattributed to that
+# ancestor repo's name instead of falling through to step 3's basename.
+#
 # Usage:
 #   PROJECT_ID="$(derive_project_id "$CWD")"
 derive_project_id() {
@@ -45,13 +52,29 @@ derive_project_id() {
   if command -v git >/dev/null 2>&1; then
     local common_dir=""
 
+    # Ceiling guard: never let git's upward .git search walk past cwd's own
+    # parent directory. Every layout this function is meant to resolve
+    # (main checkout, nested worktree, sibling worktree) keeps the repo's
+    # .git — a directory for the main checkout, a gitlink *file* for a
+    # worktree — directly inside cwd itself, so a correct lookup never
+    # needs to climb any higher than that. Without this, a cwd that is NOT
+    # a git directory of its own (e.g. a scratch/temp dir) but merely sits
+    # *underneath* an unrelated ancestor repo (e.g. a dotfiles repo rooted
+    # at $HOME — which is exactly where Windows's default %TEMP% always
+    # lives) gets misattributed to that ancestor repo's name instead of
+    # falling through to the basename fallback below. dirname() is plain
+    # string manipulation here, not a filesystem call, so it's safe even
+    # when cwd no longer exists on disk (the deleted-worktree case).
+    local ceiling
+    ceiling="$(dirname -- "$cwd")"
+
     # Preferred: ask git itself for an already-absolute path (--path-format
     # landed in git 2.31, 2021 — ubiquitous by now). This sidesteps any need
     # to hand-resolve ".." segments ourselves, which matters once cwd is
     # anything deeper than the repo root: git-common-dir is then relative
     # with multiple "../" hops (e.g. "../../../.git"), and naive string
     # concatenation + suffix-stripping would mis-basename to "..".
-    common_dir="$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+    common_dir="$(GIT_CEILING_DIRECTORIES="$ceiling" git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
 
     if [ -z "$common_dir" ]; then
       # Fallback for a git old enough not to know --path-format: resolve the
@@ -59,7 +82,7 @@ derive_project_id() {
       # actually `cd`-ing through it, rather than string-splicing — that
       # canonicalises any ".." hops away before basename ever sees the path.
       local raw
-      raw="$(git -C "$cwd" rev-parse --git-common-dir 2>/dev/null)"
+      raw="$(GIT_CEILING_DIRECTORIES="$ceiling" git -C "$cwd" rev-parse --git-common-dir 2>/dev/null)"
       if [ -n "$raw" ]; then
         raw="${raw//\\//}"
         case "$raw" in

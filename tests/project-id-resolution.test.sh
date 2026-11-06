@@ -131,6 +131,33 @@ WIN_STYLE_NESTED="$(printf '%s' "$NESTED_WT" | tr '/' '\\')"
 out="$(resolve "$WIN_STYLE_NESTED")"
 assert_eq "Windows backslash path resolves to MAIN repo name" "astramem-fixture-repo" "$out"
 
+# ---- ambient-ancestor-repo regression (post-#68 review) ----------------------
+# A plain non-git directory nested under an UNRELATED ancestor repo — e.g. a
+# dotfiles repo rooted at $HOME, which is exactly where Windows's default
+# %TEMP% always lives. This fixture lives OUTSIDE $FIXTURE_ROOT on purpose,
+# so the GIT_CEILING_DIRECTORIES export above (which only stops an upward
+# walk once it would reach $FIXTURE_ROOT) gives it no protection — this
+# exercises derive_project_id()'s OWN internal ceiling guard in isolation,
+# not the test harness's. Before that guard existed, git's default upward
+# .git search would find AMBIENT_ROOT/.git and misattribute the session to
+# "ambient-fixture-repo" instead of falling through to plain basename.
+
+AMBIENT_ROOT="$(mktemp -d)"
+trap 'rm -rf "$FIXTURE_ROOT" "$AMBIENT_ROOT"' EXIT
+
+mkdir -p "$AMBIENT_ROOT/ambient-fixture-repo"
+AMBIENT_REPO="$AMBIENT_ROOT/ambient-fixture-repo"
+git -C "$AMBIENT_REPO" init -q -b main
+git -C "$AMBIENT_REPO" config user.email 'test@example.com'
+git -C "$AMBIENT_REPO" config user.name 'test'
+git -C "$AMBIENT_REPO" commit -q --allow-empty -m init
+
+AMBIENT_NON_GIT_DIR="$AMBIENT_REPO/scratch/tmp-session-dir"
+mkdir -p "$AMBIENT_NON_GIT_DIR"
+
+out="$(resolve "$AMBIENT_NON_GIT_DIR")"
+assert_eq "non-git dir under an unrelated ambient repo still falls back to basename" "tmp-session-dir" "$out"
+
 # ---- Summary ------------------------------------------------------------------
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
