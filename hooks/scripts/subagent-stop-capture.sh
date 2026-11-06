@@ -9,8 +9,17 @@
 #     to the CLI (the CLI does its own path.resolve() but belt-and-suspenders here)
 #   - ASTRAMEM_HOOK_DEBUG=1: print resolved path + parent-dir listing to stderr
 #     (redirected to /dev/null in normal operation; unset to expose)
+#
+# issue #68: PROJECT_ID is derived via the shared derive_project_id() helper
+# (hooks/scripts/lib/project-id.sh) instead of a raw basename(cwd) — this is
+# the hook most exposed to the worktree-leak bug, since subagents are the
+# ones Claude Code actually runs inside .claude/worktrees/agent-<id>/.
 set +e
 set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/project-id.sh
+. "$SCRIPT_DIR/lib/project-id.sh"
 
 PAYLOAD="$(cat)"
 if [ -z "$PAYLOAD" ]; then
@@ -29,17 +38,12 @@ if [ -n "$TRANSCRIPT_PATH" ]; then
   TRANSCRIPT_PATH="${TRANSCRIPT_PATH//\\//}"
 fi
 
-# project_id = basename of cwd (matches existing project_id convention)
-if [ -n "$CWD" ]; then
-  PROJECT_ID="$(basename "$CWD")"
-else
-  PROJECT_ID="$(basename "$PWD")"
-fi
+PROJECT_ID="$(derive_project_id "$CWD")"
 
 # Debug logging: export ASTRAMEM_HOOK_DEBUG=1 to surface path resolution info.
 if [ "${ASTRAMEM_HOOK_DEBUG:-}" = "1" ]; then
-  printf '[astramem-hook-debug] subagent-stop-capture: session=%s transcript_path=%s cwd=%s\n' \
-    "$SESSION_ID" "$TRANSCRIPT_PATH" "$CWD" >&2
+  printf '[astramem-hook-debug] subagent-stop-capture: session=%s transcript_path=%s cwd=%s project=%s\n' \
+    "$SESSION_ID" "$TRANSCRIPT_PATH" "$CWD" "$PROJECT_ID" >&2
   if [ -n "$TRANSCRIPT_PATH" ]; then
     PARENT_DIR="$(dirname "$TRANSCRIPT_PATH")"
     if [ -d "$PARENT_DIR" ]; then
