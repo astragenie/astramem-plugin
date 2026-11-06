@@ -66,12 +66,19 @@ fi
 # (fire-and-forget contract). timeout exit 124 -> non-zero -> clean fallthrough.
 CAPTURE_TIMEOUT=""
 command -v timeout >/dev/null 2>&1 && CAPTURE_TIMEOUT="timeout 5"
+# astramem-local#375: attribute the captured transcript to the subagent that
+# produced it (payload.agent_type, e.g. "devcrew:reviewer"), not the parent
+# session's "claude-code". Without this every hook-captured atom landed on the
+# parent agent and per-role profiles / the cloud Agents page never formed.
+# Older astramem-local CLIs ignore the unknown flag (parseArg is positional-safe).
+AGENT_TYPE_ARGS=()
+[ -n "$AGENT_TYPE" ] && AGENT_TYPE_ARGS=(--agent-type "$AGENT_TYPE")
 if [ -n "$TRANSCRIPT_PATH" ] && command -v astramem-local >/dev/null 2>&1; then
   if [ "${ASTRAMEM_HOOK_DEBUG:-}" = "1" ]; then
-    if $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop >&2; then
+    if $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop "${AGENT_TYPE_ARGS[@]}" >&2; then
       exit 0
     fi
-  elif $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop >/dev/null 2>&1; then
+  elif $CAPTURE_TIMEOUT astramem-local capture claude "$TRANSCRIPT_PATH" --event subagent_stop "${AGENT_TYPE_ARGS[@]}" >/dev/null 2>&1; then
     exit 0
   fi
 fi
